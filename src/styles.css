@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  color: #1a1a2e;
+  background: #f5f4f0;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: #f5f4f0;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+button:not(:disabled),
+select:not(:disabled) {
+  cursor: pointer;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid #16a34a;
+  outline-offset: 2px;
+}
+
+::selection {
+  color: #fff;
+  background: #16a34a;
+}
+
+.canvas-checker {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #e8e8e4 25%, transparent 25%),
+    linear-gradient(-45deg, #e8e8e4 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e8e8e4 75%),
+    linear-gradient(-45deg, transparent 75%, #e8e8e4 75%);
+  background-position:
+    0 0,
+    0 6px,
+    6px -6px,
+    -6px 0;
+  background-size: 12px 12px;
+}
+
+.canvas-workspace {
+  background-color: #f8f8f5;
+  background-image: radial-gradient(rgba(26, 26, 46, 0.09) 0.7px, transparent 0.7px);
+  background-size: 18px 18px;
+}
+
+@layer components {
+  .tool-utility {
+    @apply flex h-9 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-30;
+  }
+
+  .control-select {
+    @apply rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 outline-none transition hover:border-slate-300;
+  }
+
+  .control-icon {
+    @apply flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-800;
+  }
+
+  .setting-row {
+    @apply mb-4 flex items-center justify-between gap-3 border-b border-slate-100 pb-4;
+  }
+
+  .setting-row span {
+    @apply flex flex-col gap-0.5;
+  }
+
+  .setting-row strong {
+    @apply text-xs font-bold text-slate-700;
+  }
+
+  .setting-row small {
+    @apply text-[10px] text-slate-400;
+  }
+}
+
+input[type="range"] {
+  height: 18px;
+  appearance: none;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 1px 5px rgb(0 0 0 / 20%);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 1px 5px rgb(0 0 0 / 20%);
+}
+
+.range-light::-webkit-slider-runnable-track {
+  background: #e2e8f0;
+}
+
+.range-light::-moz-range-track {
+  background: #e2e8f0;
+}
+
+.range-dark::-webkit-slider-runnable-track {
+  background: rgb(255 255 255 / 15%);
+}
+
+.range-dark::-moz-range-track {
+  background: rgb(255 255 255 / 15%);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgb(100 116 139 / 28%);
+  background-clip: padding-box;
+}
+
+@media (max-width: 639px) {
+  .canvas-workspace {
+    min-height: 430px;
+    justify-content: flex-start;
+    padding: 24px;
+  }
+}
