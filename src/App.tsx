@@ -28,6 +28,7 @@ import { downloadGif, encodeGif } from './lib/exportGif'
 import { importImageFile } from './lib/importImage'
 import { createBlankPixels, hasPaint, normalizeHex, pixelsEqual } from './lib/pixels'
 import { loadProject, saveProject } from './lib/storage'
+import { usePixelHistory } from './hooks/usePixelHistory'
 import {
   RESOLUTIONS,
   type AnimationFrame,
@@ -47,15 +48,15 @@ const ZOOM_OPTIONS: Record<Resolution, number[]> = {
 
 const defaultProject = (): ProjectState => ({
   version: 1,
-  resolution: 32,
-  pixels: createBlankPixels(32),
-  baselinePixels: createBlankPixels(32),
+  resolution: 16,
+  pixels: createBlankPixels(16),
+  baselinePixels: createBlankPixels(16),
   frames: [],
   editingFrameId: null,
   color: DEFAULT_COLOR,
   fps: 8,
   exportScale: 4,
-  zoom: 12,
+  zoom: 24,
   showGrid: true,
   transparentBackground: true,
   backgroundColor: '#ffffff',
@@ -79,7 +80,18 @@ function isTextInput(target: EventTarget | null): boolean {
 export default function App() {
   const initial = useRef(defaultProject()).current
   const [resolution, setResolution] = useState<Resolution>(initial.resolution)
-  const [pixels, setPixels] = useState<Pixel[]>(initial.pixels)
+  const {
+    pixels,
+    setPixels,
+    beginStroke: handleStrokeStart,
+    endStroke: handleStrokeEnd,
+    commitPixels,
+    undo,
+    redo,
+    resetHistory,
+    canUndo,
+    canRedo,
+  } = usePixelHistory(initial.pixels)
   const [baselinePixels, setBaselinePixels] = useState<Pixel[]>(initial.baselinePixels)
   const [frames, setFrames] = useState<AnimationFrame[]>(initial.frames)
   const [editingFrameId, setEditingFrameId] = useState<string | null>(null)
@@ -102,11 +114,6 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [, setHistoryRevision] = useState(0)
-
-  const undoStackRef = useRef<Pixel[][]>([])
-  const redoStackRef = useRef<Pixel[][]>([])
-  const strokeStartRef = useRef<Pixel[] | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const dirty = useMemo(() => !pixelsEqual(pixels, baselinePixels), [pixels, baselinePixels])
 
@@ -204,16 +211,6 @@ export default function App() {
     if (frames.length < 2) setIsPlaying(false)
   }, [frames.length, previewIndex])
 
-  function resetHistory() {
-    undoStackRef.current = []
-    redoStackRef.current = []
-    setHistoryRevision((current) => current + 1)
-  }
-
-  function handleStrokeStart() {
-    strokeStartRef.current = pixels.slice()
-  }
-
   function handleDraw(indices: number[]) {
     const nextColor = tool === 'eraser' ? null : color
     setPixels((current) => {
@@ -223,45 +220,6 @@ export default function App() {
       })
       return next
     })
-  }
-
-  function handleStrokeEnd() {
-    setPixels((current) => {
-      const start = strokeStartRef.current
-      if (start && !pixelsEqual(start, current)) {
-        undoStackRef.current.push(start)
-        if (undoStackRef.current.length > 80) undoStackRef.current.shift()
-        redoStackRef.current = []
-        setHistoryRevision((revision) => revision + 1)
-      }
-      strokeStartRef.current = null
-      return current
-    })
-  }
-
-  function commitPixels(next: Pixel[]) {
-    if (pixelsEqual(pixels, next)) return
-    undoStackRef.current.push(pixels.slice())
-    if (undoStackRef.current.length > 80) undoStackRef.current.shift()
-    redoStackRef.current = []
-    setPixels(next)
-    setHistoryRevision((current) => current + 1)
-  }
-
-  function undo() {
-    const previous = undoStackRef.current.pop()
-    if (!previous) return
-    redoStackRef.current.push(pixels.slice())
-    setPixels(previous)
-    setHistoryRevision((current) => current + 1)
-  }
-
-  function redo() {
-    const next = redoStackRef.current.pop()
-    if (!next) return
-    undoStackRef.current.push(pixels.slice())
-    setPixels(next)
-    setHistoryRevision((current) => current + 1)
   }
 
   useEffect(() => {
@@ -672,7 +630,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={undo}
-                disabled={undoStackRef.current.length === 0}
+                disabled={!canUndo}
                 className="tool-utility"
                 title="Undo (⌘/Ctrl + Z)"
               >
@@ -681,7 +639,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={redo}
-                disabled={redoStackRef.current.length === 0}
+                disabled={!canRedo}
                 className="tool-utility"
                 title="Redo (⌘/Ctrl + Shift + Z)"
               >
