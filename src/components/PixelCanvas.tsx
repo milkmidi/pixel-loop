@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { ImagePlus, LoaderCircle } from 'lucide-react'
 import type { DrawingTool, Pixel } from '../types'
 import { drawLineIndices } from '../lib/pixels'
 
@@ -12,6 +13,8 @@ interface PixelCanvasProps {
   onDraw: (indices: number[]) => void
   onStrokeEnd: () => void
   onPick: (pixel: Pixel) => void
+  onImageDrop: (file: File) => void
+  isImporting: boolean
 }
 
 export function PixelCanvas({
@@ -24,10 +27,14 @@ export function PixelCanvas({
   onDraw,
   onStrokeEnd,
   onPick,
+  onImageDrop,
+  isImporting,
 }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activePointerRef = useRef<number | null>(null)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
+  const dragDepthRef = useRef(0)
+  const [isDraggingImage, setIsDraggingImage] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -92,16 +99,49 @@ export function PixelCanvas({
 
   const displaySize = resolution * zoom
 
+  function handleDragEnter(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    dragDepthRef.current += 1
+    setIsDraggingImage(true)
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDraggingImage(false)
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    dragDepthRef.current = 0
+    setIsDraggingImage(false)
+    const file = Array.from(event.dataTransfer.files).find((item) =>
+      item.type.startsWith('image/'),
+    )
+    if (file) onImageDrop(file)
+  }
+
   return (
     <div
       className="canvas-checker relative shrink-0 overflow-hidden rounded-sm shadow-[0_24px_60px_rgba(26,26,46,0.16)] ring-1 ring-black/10"
       style={{ width: displaySize, height: displaySize }}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <canvas
         ref={canvasRef}
         width={resolution}
         height={resolution}
-        aria-label={`${resolution} 乘 ${resolution} 像素繪圖畫布`}
+        aria-label={`${resolution} by ${resolution} pixel drawing canvas`}
         className={`absolute inset-0 h-full w-full touch-none select-none [image-rendering:pixelated] ${
           tool === 'eyedropper' ? 'cursor-crosshair' : 'cursor-cell'
         }`}
@@ -119,6 +159,21 @@ export function PixelCanvas({
             backgroundSize: `${zoom}px ${zoom}px`,
           }}
         />
+      )}
+      {(isDraggingImage || isImporting) && (
+        <div className="pointer-events-none absolute inset-2 z-20 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#4ade80] bg-[#1a1a2e]/88 text-center text-white shadow-2xl backdrop-blur-sm">
+          {isImporting ? (
+            <LoaderCircle size={30} className="mb-3 animate-spin text-[#4ade80]" />
+          ) : (
+            <ImagePlus size={30} className="mb-3 text-[#4ade80]" />
+          )}
+          <strong className="text-sm font-bold">
+            {isImporting ? 'Parsing image…' : 'Drop image to pixelate'}
+          </strong>
+          <span className="mt-1 text-[10px] text-white/55">
+            PNG · JPG · WebP · GIF first frame
+          </span>
+        </div>
       )}
     </div>
   )

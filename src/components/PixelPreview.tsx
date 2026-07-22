@@ -12,7 +12,7 @@ export function PixelPreview({
   pixels,
   resolution,
   className = '',
-  label = '像素畫預覽',
+  label = 'Pixel art preview',
 }: PixelPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 

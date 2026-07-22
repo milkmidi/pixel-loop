@@ -5,6 +5,7 @@ import {
   Check,
   Download,
   Eraser,
+  FolderX,
   Grid3X3,
   LoaderCircle,
   ImagePlus,
@@ -288,33 +289,29 @@ export default function App() {
 
   function pickColor(pixel: Pixel) {
     if (!pixel) {
-      setToast('這一格是透明像素')
+      setToast('This pixel is transparent')
       return
     }
     setColor(pixel)
     setColorDraft(pixel)
     setTool('pencil')
-    setToast(`已吸取 ${pixel.toUpperCase()}`)
+    setToast(`Picked ${pixel.toUpperCase()}`)
   }
 
   function applyColorDraft() {
     const normalized = normalizeHex(colorDraft)
     if (!normalized) {
       setColorDraft(color)
-      setToast('請輸入有效的 Hex 色碼')
+      setToast('Enter a valid hex color')
       return
     }
     setColor(normalized)
     setColorDraft(normalized)
   }
 
-  async function handleImageImport(event: React.ChangeEvent<HTMLInputElement>) {
-    const input = event.currentTarget
-    const file = input.files?.[0]
-    if (!file) return
-
-    if (hasPaint(pixels) && !window.confirm('匯入圖片會覆蓋目前畫布，確定繼續嗎？')) {
-      input.value = ''
+  async function processImageFile(file: File) {
+    if (isImporting) return
+    if (hasPaint(pixels) && !window.confirm('Importing an image will replace the current canvas. Continue?')) {
       return
     }
 
@@ -323,27 +320,33 @@ export default function App() {
       const importedPixels = await importImageFile(file, resolution)
       commitPixels(importedPixels)
       setTool('pencil')
-      setToast(`已匯入 ${file.name}`)
+      setToast(`Imported ${file.name}`)
     } catch (error) {
       if (error instanceof Error && error.message === 'IMAGE_TOO_LARGE') {
-        setToast('圖片不可超過 20 MB')
+        setToast('Images must be smaller than 20 MB')
       } else if (error instanceof Error && error.message === 'UNSUPPORTED_IMAGE') {
-        setToast('僅支援 PNG、JPG、WebP 與 GIF')
+        setToast('Only PNG, JPG, WebP, and GIF files are supported')
       } else {
         console.error(error)
-        setToast('圖片解析失敗，請改用其他檔案')
+        setToast('Could not parse this image. Try another file')
       }
     } finally {
-      input.value = ''
       setIsImporting(false)
     }
+  }
+
+  async function handleImageImport(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    if (file) await processImageFile(file)
+    input.value = ''
   }
 
   function changeResolution(nextResolution: Resolution) {
     if (nextResolution === resolution) return
     if (
       (hasPaint(pixels) || frames.length > 0) &&
-      !window.confirm('切換尺寸會清空畫布與所有 Frames，確定繼續嗎？')
+      !window.confirm('Changing the size will clear the canvas and all frames. Continue?')
     ) {
       return
     }
@@ -358,9 +361,40 @@ export default function App() {
     resetHistory()
   }
 
+  function resetProject() {
+    if (
+      !window.confirm(
+        'Reset the entire project? The canvas, all frames, and settings will be cleared. This cannot be undone.',
+      )
+    ) {
+      return
+    }
+
+    const reset = defaultProject()
+    setResolution(reset.resolution)
+    setPixels(reset.pixels)
+    setBaselinePixels(reset.baselinePixels)
+    setFrames(reset.frames)
+    setEditingFrameId(reset.editingFrameId)
+    setTool('pencil')
+    setColor(reset.color)
+    setColorDraft(reset.color)
+    setFps(reset.fps)
+    setExportScale(reset.exportScale)
+    setZoom(reset.zoom)
+    setShowGrid(reset.showGrid)
+    setTransparentBackground(reset.transparentBackground)
+    setBackgroundColor(reset.backgroundColor)
+    setIsPlaying(false)
+    setPreviewIndex(0)
+    setShowExportDialog(false)
+    resetHistory()
+    setToast('Project reset complete')
+  }
+
   function snapshot() {
     if (frames.length >= 100) {
-      setToast('已達 100 幀上限')
+      setToast('The 100-frame limit has been reached')
       return
     }
     const frame: AnimationFrame = { id: newId(), pixels: pixels.slice(), createdAt: Date.now() }
@@ -368,8 +402,8 @@ export default function App() {
     setBaselinePixels(pixels.slice())
     setEditingFrameId(null)
     setPreviewIndex(frames.length)
-    if (frames.length + 1 === 80) setToast('已達 80 幀，繼續增加可能影響效能')
-    else setToast(`已建立 Frame ${frames.length + 1}`)
+    if (frames.length + 1 === 80) setToast('80 frames reached. Adding more may affect performance')
+    else setToast(`Created Frame ${frames.length + 1}`)
   }
 
   function updateFrame() {
@@ -380,11 +414,11 @@ export default function App() {
       ),
     )
     setBaselinePixels(pixels.slice())
-    setToast('Frame 已更新')
+    setToast('Frame updated')
   }
 
   function selectFrame(frame: AnimationFrame) {
-    if (dirty && !window.confirm('目前畫布有未保存修改，確定要切換 Frame 嗎？')) return
+    if (dirty && !window.confirm('The canvas has unsaved changes. Switch frames anyway?')) return
     setPixels(frame.pixels.slice())
     setBaselinePixels(frame.pixels.slice())
     setEditingFrameId(frame.id)
@@ -400,12 +434,12 @@ export default function App() {
       setEditingFrameId(null)
       setBaselinePixels(createBlankPixels(resolution))
     }
-    setToast(`已刪除 Frame ${index + 1}`)
+    setToast(`Deleted Frame ${index + 1}`)
   }
 
   function duplicateFrame(id: string) {
     if (frames.length >= 100) {
-      setToast('已達 100 幀上限')
+      setToast('The 100-frame limit has been reached')
       return
     }
     setFrames((current) => {
@@ -420,8 +454,8 @@ export default function App() {
       next.splice(index + 1, 0, duplicate)
       return next
     })
-    if (frames.length + 1 === 80) setToast('已達 80 幀，繼續增加可能影響效能')
-    else setToast('Frame 已複製')
+    if (frames.length + 1 === 80) setToast('80 frames reached. Adding more may affect performance')
+    else setToast('Frame duplicated')
   }
 
   function reorderFrames(activeId: string, overId: string) {
@@ -457,10 +491,10 @@ export default function App() {
         })
         const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '-')
         downloadGif(bytes, `pixel-loop-${stamp}.gif`)
-        setToast(`GIF 已匯出，共 ${exportFrames.length} 幀`)
+        setToast(`GIF exported with ${exportFrames.length} frame${exportFrames.length === 1 ? '' : 's'}`)
       } catch (error) {
         console.error(error)
-        setToast('GIF 匯出失敗，請再試一次')
+        setToast('GIF export failed. Please try again')
       } finally {
         setIsExporting(false)
       }
@@ -474,9 +508,9 @@ export default function App() {
     shortcut: string
     icon: typeof Pencil
   }> = [
-    { id: 'pencil', label: '鉛筆', shortcut: 'P', icon: Pencil },
-    { id: 'eraser', label: '橡皮擦', shortcut: 'E', icon: Eraser },
-    { id: 'eyedropper', label: '畫布吸色', shortcut: 'I', icon: Pipette },
+    { id: 'pencil', label: 'Pencil', shortcut: 'P', icon: Pencil },
+    { id: 'eraser', label: 'Eraser', shortcut: 'E', icon: Eraser },
+    { id: 'eyedropper', label: 'Eyedropper', shortcut: 'I', icon: Pipette },
   ]
 
   return (
@@ -513,12 +547,12 @@ export default function App() {
                 <Check size={13} className="text-[#16a34a]" />
               )}
               {saveStatus === 'saving'
-                ? '儲存中…'
+                ? 'Saving…'
                 : saveStatus === 'loading'
-                  ? '載入中…'
+                  ? 'Loading…'
                   : saveStatus === 'error'
-                    ? '無法自動儲存'
-                    : '已自動儲存'}
+                    ? 'Autosave failed'
+                    : 'Autosaved'}
             </div>
             <input
               ref={imageInputRef}
@@ -526,14 +560,14 @@ export default function App() {
               accept="image/png,image/jpeg,image/webp,image/gif"
               onChange={handleImageImport}
               className="sr-only"
-              aria-label="選擇要匯入的圖片"
+              aria-label="Choose an image to import"
             />
             <button
               type="button"
               onClick={() => imageInputRef.current?.click()}
               disabled={isImporting}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50 sm:px-4"
-              title="支援 PNG、JPG、WebP 與 GIF 第一幀"
+              title="Supports PNG, JPG, WebP, and the first frame of GIF files"
             >
               {isImporting ? (
                 <LoaderCircle size={16} className="animate-spin" />
@@ -602,7 +636,7 @@ export default function App() {
                     setColorDraft(event.target.value)
                   }}
                   className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label="選擇顏色"
+                  aria-label="Choose a color"
                 />
               </label>
               <input
@@ -610,7 +644,7 @@ export default function App() {
                 onChange={(event) => setColorDraft(event.target.value)}
                 onBlur={applyColorDraft}
                 onKeyDown={(event) => event.key === 'Enter' && applyColorDraft()}
-                aria-label="Hex 色碼"
+                aria-label="Hex color"
                 className="min-w-0 flex-1 bg-transparent font-mono text-xs font-semibold uppercase text-slate-600 outline-none"
               />
             </div>
@@ -624,7 +658,7 @@ export default function App() {
                     setColorDraft(preset)
                     setTool('pencil')
                   }}
-                  aria-label={`使用顏色 ${preset}`}
+                  aria-label={`Use color ${preset}`}
                   className={`aspect-square rounded-lg ring-1 ring-black/10 transition hover:scale-110 ${
                     color === preset ? 'outline-2 outline-offset-2 outline-[#16a34a]' : ''
                   }`}
@@ -640,7 +674,7 @@ export default function App() {
                 onClick={undo}
                 disabled={undoStackRef.current.length === 0}
                 className="tool-utility"
-                title="復原 (⌘/Ctrl + Z)"
+                title="Undo (⌘/Ctrl + Z)"
               >
                 <Undo2 size={15} />
               </button>
@@ -649,7 +683,7 @@ export default function App() {
                 onClick={redo}
                 disabled={redoStackRef.current.length === 0}
                 className="tool-utility"
-                title="重做 (⌘/Ctrl + Shift + Z)"
+                title="Redo (⌘/Ctrl + Shift + Z)"
               >
                 <Redo2 size={15} />
               </button>
@@ -658,10 +692,10 @@ export default function App() {
                 onClick={() => commitPixels(createBlankPixels(resolution))}
                 disabled={!hasPaint(pixels)}
                 className="tool-utility xl:col-span-2"
-                title="清空畫布"
+                title="Clear canvas"
               >
                 <Trash2 size={15} />
-                <span className="hidden xl:inline">清空</span>
+                <span className="hidden xl:inline">Clear</span>
               </button>
             </div>
           </aside>
@@ -672,11 +706,11 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-bold">Canvas</h2>
                   {dirty && (
-                    <span className="h-2 w-2 rounded-full bg-amber-400" title="有未保存的修改" />
+                    <span className="h-2 w-2 rounded-full bg-amber-400" title="Unsaved changes" />
                   )}
                 </div>
                 <p className="mt-0.5 text-[11px] text-slate-400">
-                  {editingFrameId ? '正在編輯既有 Frame' : '自由繪圖模式'}
+                  {editingFrameId ? 'Editing an existing frame' : 'Free drawing mode'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -684,7 +718,7 @@ export default function App() {
                   value={resolution}
                   onChange={(event) => changeResolution(Number(event.target.value) as Resolution)}
                   className="control-select"
-                  aria-label="畫布解析度"
+                  aria-label="Canvas resolution"
                 >
                   {RESOLUTIONS.map((size) => (
                     <option key={size} value={size}>
@@ -696,7 +730,7 @@ export default function App() {
                   value={zoom}
                   onChange={(event) => setZoom(Number(event.target.value))}
                   className="control-select"
-                  aria-label="畫布縮放"
+                  aria-label="Canvas zoom"
                 >
                   {ZOOM_OPTIONS[resolution].map((value) => (
                     <option key={value} value={value}>
@@ -708,7 +742,7 @@ export default function App() {
                   type="button"
                   onClick={() => setShowGrid((current) => !current)}
                   className={`control-icon ${showGrid ? 'bg-green-50 text-[#15803d]' : ''}`}
-                  title="顯示／隱藏格線"
+                  title="Show or hide the grid"
                 >
                   <Grid3X3 size={16} />
                 </button>
@@ -726,12 +760,14 @@ export default function App() {
                 onDraw={handleDraw}
                 onStrokeEnd={handleStrokeEnd}
                 onPick={pickColor}
+                onImageDrop={(file) => void processImageFile(file)}
+                isImporting={isImporting}
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4">
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-500">Tip:</span> 拖曳可連續繪製，P / E / I 切換工具，Space 建立 Snapshot
+                <span className="font-semibold text-slate-500">Tip:</span> Drop images onto the canvas, use P / E / I to switch tools, and press Space to snapshot
               </p>
               <div className="flex gap-2">
                 {editingFrameId && (
@@ -781,7 +817,7 @@ export default function App() {
                   onClick={() => setIsPlaying((current) => !current)}
                   disabled={frames.length < 2}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#16a34a] text-white transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-35"
-                  aria-label={isPlaying ? '暫停預覽' : '播放預覽'}
+                  aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
                 >
                   {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
                 </button>
@@ -796,7 +832,7 @@ export default function App() {
                   }}
                   disabled={frames.length === 0}
                   className="range-dark min-w-0 flex-1"
-                  aria-label="預覽 Frame"
+                  aria-label="Preview frame"
                 />
               </div>
             </section>
@@ -843,8 +879,8 @@ export default function App() {
               <div className="mt-4 border-t border-slate-100 pt-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-bold text-slate-700">透明背景</p>
-                    <p className="mt-0.5 text-[10px] text-slate-400">棋盤格不會輸出</p>
+                    <p className="text-xs font-bold text-slate-700">Transparent background</p>
+                    <p className="mt-0.5 text-[10px] text-slate-400">The checkerboard is not exported</p>
                   </div>
                   <button
                     type="button"
@@ -864,7 +900,7 @@ export default function App() {
                 </div>
                 {!transparentBackground && (
                   <label className="flex items-center justify-between rounded-xl bg-slate-50 p-2.5 text-xs font-semibold text-slate-500">
-                    背景色
+                    Background color
                     <input
                       type="color"
                       value={backgroundColor}
@@ -877,15 +913,25 @@ export default function App() {
 
               <div className="mt-4 flex items-start gap-2 rounded-xl bg-green-50 p-3 text-[10px] leading-4 text-[#15803d]">
                 <Sparkles size={13} className="mt-0.5 shrink-0" />
-                使用 nearest-neighbor 整數放大，GIF 會維持清晰像素邊緣並無限循環。
+                Integer nearest-neighbor scaling keeps pixel edges crisp. GIFs loop forever.
               </div>
+
+              <button
+                type="button"
+                onClick={resetProject}
+                disabled={isImporting || isExporting}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 px-3 py-2.5 text-xs font-bold text-red-500 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <FolderX size={14} />
+                Reset entire project
+              </button>
             </section>
           </aside>
         </div>
 
         {frames.length >= 80 && (
           <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
-            <RotateCcw size={14} /> 已有 {frames.length} 幀；接近 100 幀上限，預覽與匯出可能需要較長時間。
+            <RotateCcw size={14} /> {frames.length} frames created. You are approaching the 100-frame limit, so preview and export may take longer.
           </div>
         )}
 

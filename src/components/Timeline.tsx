@@ -65,7 +65,7 @@ function SortableFrame({
         <button
           type="button"
           className="cursor-grab rounded p-0.5 text-white/35 hover:text-white active:cursor-grabbing"
-          aria-label={`拖曳第 ${index + 1} 幀`}
+          aria-label={`Drag Frame ${index + 1}`}
           {...attributes}
           {...listeners}
         >
@@ -79,7 +79,7 @@ function SortableFrame({
         <PixelPreview
           pixels={frame.pixels}
           resolution={resolution}
-          label={`第 ${index + 1} 幀預覽`}
+          label={`Frame ${index + 1} preview`}
           className="aspect-square w-full rounded-lg ring-1 ring-white/10"
         />
       </button>
@@ -88,7 +88,7 @@ function SortableFrame({
           type="button"
           onClick={onDuplicate}
           className="rounded-md p-1 text-white/60 hover:bg-white/10 hover:text-white"
-          aria-label={`複製第 ${index + 1} 幀`}
+          aria-label={`Duplicate Frame ${index + 1}`}
         >
           <Copy size={13} />
         </button>
@@ -96,7 +96,7 @@ function SortableFrame({
           type="button"
           onClick={onDelete}
           className="rounded-md p-1 text-white/60 hover:bg-red-400/15 hover:text-red-300"
-          aria-label={`刪除第 ${index + 1} 幀`}
+          aria-label={`Delete Frame ${index + 1}`}
         >
           <Trash2 size={13} />
         </button>
@@ -170,8 +170,8 @@ export function Timeline({
                 className="flex w-full min-w-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 px-8 py-7 text-center text-white/45 transition hover:border-[#4ade80]/50 hover:bg-white/5 hover:text-white/70"
               >
                 <Plus className="mb-2" size={22} />
-                <span className="text-sm font-semibold">建立第一個 Snapshot</span>
-                <span className="mt-1 text-xs text-white/30">擷取後會保留畫布，接著修改下一幀</span>
+                <span className="text-sm font-semibold">Create your first snapshot</span>
+                <span className="mt-1 text-xs text-white/30">The canvas stays in place so you can draw the next frame</span>
               </button>
             )}
           </div>
