@@ -2,7 +2,22 @@ export const RESOLUTIONS = [16, 32, 64] as const
 export type Resolution = (typeof RESOLUTIONS)[number]
 
 export type Pixel = string | null
-export type DrawingTool = 'pencil' | 'eraser' | 'eyedropper'
+export type DrawingTool = 'pencil' | 'eraser' | 'eyedropper' | 'text'
+
+export interface PixelTextPlacement {
+  text: string
+  x: number
+  y: number
+  fontSize: number
+  color: string
+}
+
+export interface PixelTextBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 export interface AnimationFrame {
   id: string

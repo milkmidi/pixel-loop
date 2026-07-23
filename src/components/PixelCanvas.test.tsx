@@ -107,4 +107,59 @@ describe('PixelCanvas', () => {
     const canvas = screen.getByLabelText('16 by 16 pixel drawing canvas')
     expect(fireEvent.contextMenu(canvas)).toBe(false)
   })
+
+  it('moves a selected text placement by dragging its canvas bounds', () => {
+    const onMoveText = vi.fn()
+    render(
+      <PixelCanvas
+        pixels={pixels}
+        resolution={16}
+        zoom={10}
+        showGrid
+        tool="text"
+        onStrokeStart={vi.fn()}
+        onDraw={vi.fn()}
+        onStrokeEnd={vi.fn()}
+        onPick={vi.fn()}
+        onImageDrop={vi.fn()}
+        isImporting={false}
+        textSelection={{
+          x: 2,
+          y: 3,
+          bounds: { x: 2, y: 3, width: 5, height: 4 },
+        }}
+        onMoveText={onMoveText}
+      />,
+    )
+
+    const canvas = screen.getByLabelText('16 by 16 pixel drawing canvas')
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 160,
+      bottom: 160,
+      width: 160,
+      height: 160,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      pointerId: 7,
+      pointerType: 'mouse',
+      clientX: 35,
+      clientY: 45,
+    })
+    fireEvent.pointerMove(canvas, {
+      buttons: 1,
+      pointerId: 7,
+      pointerType: 'mouse',
+      clientX: 75,
+      clientY: 85,
+    })
+
+    expect(onMoveText).toHaveBeenCalledWith(6, 7)
+  })
 })

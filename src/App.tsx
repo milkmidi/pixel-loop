@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  Type,
   Undo2,
   WandSparkles,
 } from 'lucide-react'
@@ -28,6 +29,7 @@ import { PixelPreview } from './components/PixelPreview'
 import { Timeline } from './components/Timeline'
 import { downloadGif, encodeGif } from './lib/exportGif'
 import { importImageFile } from './lib/importImage'
+import { renderPixelText } from './lib/pixelText'
 import type { ParsedAnimation } from './lib/importAnimationJson'
 import {
   createBlankPixels,
@@ -44,6 +46,7 @@ import {
   type AnimationFrame,
   type DrawingTool,
   type Pixel,
+  type PixelTextPlacement,
   type ProjectState,
   type Resolution,
 } from './types'
@@ -114,6 +117,9 @@ export default function App() {
   const [tool, setTool] = useState<DrawingTool>('pencil')
   const [color, setColor] = useState(DEFAULT_COLOR)
   const [colorDraft, setColorDraft] = useState(DEFAULT_COLOR)
+  const [textValue, setTextValue] = useState('')
+  const [textFontSize, setTextFontSize] = useState(7)
+  const [textDraft, setTextDraft] = useState<PixelTextPlacement | null>(null)
   const [fps, setFps] = useState(8)
   const [exportScale, setExportScale] = useState(4)
   const [zoom, setZoom] = useState(initial.zoom)
@@ -132,7 +138,15 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const dirty = useMemo(() => !pixelsEqual(pixels, baselinePixels), [pixels, baselinePixels])
+  const renderedText = useMemo(
+    () => (textDraft ? renderPixelText(pixels, resolution, textDraft) : null),
+    [pixels, resolution, textDraft],
+  )
+  const displayPixels = renderedText?.pixels ?? pixels
+  const dirty = useMemo(
+    () => Boolean(textDraft) || !pixelsEqual(pixels, baselinePixels),
+    [pixels, baselinePixels, textDraft],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -239,6 +253,46 @@ export default function App() {
     })
   }
 
+  function placeText() {
+    if (!textValue.trim()) {
+      setToast('Enter some text first')
+      return
+    }
+
+    const initialPlacement: PixelTextPlacement = {
+      text: textValue,
+      x: 0,
+      y: 0,
+      fontSize: textFontSize,
+      color,
+    }
+    const initialRender = renderPixelText(pixels, resolution, initialPlacement)
+    const x = Math.floor((resolution - initialRender.bounds.width) / 2) - initialRender.bounds.x
+    const y = Math.floor((resolution - initialRender.bounds.height) / 2) - initialRender.bounds.y
+    setTextDraft({ ...initialPlacement, x, y })
+    setTool('text')
+  }
+
+  function moveText(x: number, y: number) {
+    setTextDraft((current) => {
+      if (!current || !renderedText) return current
+      const offsetX = renderedText.bounds.x - current.x
+      const offsetY = renderedText.bounds.y - current.y
+      return {
+        ...current,
+        x: Math.max(-offsetX, Math.min(resolution - renderedText.bounds.width - offsetX, x)),
+        y: Math.max(-offsetY, Math.min(resolution - renderedText.bounds.height - offsetY, y)),
+      }
+    })
+  }
+
+  function applyText() {
+    if (!textDraft || !renderedText) return
+    commitPixels(renderedText.pixels)
+    setTextDraft(null)
+    setToast('Text added to the canvas')
+  }
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (isTextInput(event.target)) return
@@ -264,12 +318,23 @@ export default function App() {
       const direction = arrowDirections[event.key]
       if (!command && !event.altKey && direction) {
         event.preventDefault()
+        if (tool === 'text' && textDraft) {
+          const offsets: Record<PixelShiftDirection, { x: number; y: number }> = {
+            up: { x: 0, y: -1 },
+            down: { x: 0, y: 1 },
+            left: { x: -1, y: 0 },
+            right: { x: 1, y: 0 },
+          }
+          moveText(textDraft.x + offsets[direction].x, textDraft.y + offsets[direction].y)
+          return
+        }
         commitPixels((current) => shiftPixels(current, resolution, direction))
         return
       }
       if (!command && event.key.toLowerCase() === 'p') setTool('pencil')
       if (!command && event.key.toLowerCase() === 'e') setTool('eraser')
       if (!command && event.key.toLowerCase() === 'i') setTool('eyedropper')
+      if (!command && event.key.toLowerCase() === 't') setTool('text')
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -307,6 +372,7 @@ export default function App() {
     try {
       const importedPixels = await importImageFile(file, resolution)
       commitPixels(importedPixels)
+      setTextDraft(null)
       setTool('pencil')
       setToast(`Imported ${file.name}`)
     } catch (error) {
@@ -351,6 +417,7 @@ export default function App() {
     setBaselinePixels(firstFrame.pixels.slice())
     setFrames(importedFrames)
     setEditingFrameId(firstFrame.id)
+    setTextDraft(null)
     setTool('pencil')
     setColor(firstPaletteColor)
     setColorDraft(firstPaletteColor)
@@ -384,6 +451,8 @@ export default function App() {
     setBaselinePixels(blank.slice())
     setFrames([])
     setEditingFrameId(null)
+    setTextDraft(null)
+    setTextFontSize(Math.max(4, Math.round(nextResolution * 0.44)))
     setPreviewIndex(0)
     setZoom(defaultZoomForResolution(nextResolution))
     resetHistory()
@@ -404,6 +473,9 @@ export default function App() {
     setBaselinePixels(reset.baselinePixels)
     setFrames(reset.frames)
     setEditingFrameId(reset.editingFrameId)
+    setTextDraft(null)
+    setTextValue('')
+    setTextFontSize(7)
     setTool('pencil')
     setColor(reset.color)
     setColorDraft(reset.color)
@@ -426,9 +498,12 @@ export default function App() {
       setToast('The 100-frame limit has been reached')
       return
     }
-    const frame: AnimationFrame = { id: newId(), pixels: pixels.slice(), createdAt: Date.now() }
+    const nextPixels = displayPixels.slice()
+    const frame: AnimationFrame = { id: newId(), pixels: nextPixels, createdAt: Date.now() }
     setFrames((current) => [...current, frame])
-    setBaselinePixels(pixels.slice())
+    setPixels(nextPixels)
+    setBaselinePixels(nextPixels.slice())
+    setTextDraft(null)
     setEditingFrameId(null)
     setPreviewIndex(frames.length)
     if (frames.length + 1 === 80) setToast('80 frames reached. Adding more may affect performance')
@@ -437,12 +512,15 @@ export default function App() {
 
   function updateFrame() {
     if (!editingFrameId) return
+    const nextPixels = displayPixels.slice()
     setFrames((current) =>
       current.map((frame) =>
-        frame.id === editingFrameId ? { ...frame, pixels: pixels.slice() } : frame,
+        frame.id === editingFrameId ? { ...frame, pixels: nextPixels } : frame,
       ),
     )
-    setBaselinePixels(pixels.slice())
+    setPixels(nextPixels)
+    setBaselinePixels(nextPixels.slice())
+    setTextDraft(null)
     setToast('Frame updated')
   }
 
@@ -451,6 +529,7 @@ export default function App() {
     setPixels(frame.pixels.slice())
     setBaselinePixels(frame.pixels.slice())
     setEditingFrameId(frame.id)
+    setTextDraft(null)
     setPreviewIndex(Math.max(0, frames.findIndex((item) => item.id === frame.id)))
     resetHistory()
   }
@@ -509,7 +588,7 @@ export default function App() {
     window.setTimeout(() => {
       try {
         const exportFrames = frames.map((frame) => frame.pixels)
-        if (includeCurrent || exportFrames.length === 0) exportFrames.push(pixels)
+        if (includeCurrent || exportFrames.length === 0) exportFrames.push(displayPixels)
         const bytes = encodeGif({
           frames: exportFrames,
           resolution,
@@ -530,7 +609,7 @@ export default function App() {
     }, 50)
   }
 
-  const previewPixels = frames.length > 0 ? frames[previewIndex]?.pixels : pixels
+  const previewPixels = frames.length > 0 ? frames[previewIndex]?.pixels : displayPixels
   const toolOptions: Array<{
     id: DrawingTool
     label: string
@@ -540,6 +619,7 @@ export default function App() {
     { id: 'pencil', label: 'Pencil', shortcut: 'P', icon: Pencil },
     { id: 'eraser', label: 'Eraser', shortcut: 'E', icon: Eraser },
     { id: 'eyedropper', label: 'Eyedropper', shortcut: 'I', icon: Pipette },
+    { id: 'text', label: 'Text', shortcut: 'T', icon: Type },
   ]
 
   return (
@@ -638,7 +718,7 @@ export default function App() {
                 01
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-2 xl:grid-cols-1">
+            <div className="grid grid-cols-4 gap-2 xl:grid-cols-1">
               {toolOptions.map(({ id, label, shortcut, icon: Icon }) => (
                 <button
                   key={id}
@@ -658,6 +738,78 @@ export default function App() {
                 </button>
               ))}
             </div>
+
+            {tool === 'text' && (
+              <div className="mt-4 rounded-xl border border-green-100 bg-green-50/70 p-3">
+                <label className="block text-[10px] font-black uppercase tracking-[0.14em] text-[#15803d]">
+                  Text content
+                  <input
+                    value={textValue}
+                    maxLength={40}
+                    placeholder="Type something…"
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setTextValue(value)
+                      setTextDraft((current) => (current ? { ...current, text: value } : current))
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !textDraft) placeText()
+                    }}
+                    className="mt-2 w-full rounded-lg border border-green-200 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-slate-700 outline-none"
+                    aria-label="Text content"
+                  />
+                </label>
+                <label className="mt-3 block text-[10px] font-bold text-slate-500">
+                  <span className="mb-1.5 flex items-center justify-between">
+                    Pixel size <strong className="text-[#15803d]">{textFontSize}px</strong>
+                  </span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={resolution}
+                    value={textFontSize}
+                    onChange={(event) => {
+                      const fontSize = Number(event.target.value)
+                      setTextFontSize(fontSize)
+                      setTextDraft((current) => (current ? { ...current, fontSize } : current))
+                    }}
+                    className="range-light w-full"
+                    aria-label="Text pixel size"
+                  />
+                </label>
+                {!textDraft ? (
+                  <button
+                    type="button"
+                    onClick={placeText}
+                    disabled={!textValue.trim()}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#16a34a] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#15803d] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Type size={14} /> Place on canvas
+                  </button>
+                ) : (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTextDraft(null)}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-bold text-slate-500 hover:text-slate-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyText}
+                      disabled={!textValue.trim()}
+                      className="rounded-lg bg-[#16a34a] px-2 py-2 text-xs font-bold text-white hover:bg-[#15803d] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Apply text
+                    </button>
+                  </div>
+                )}
+                <p className="mt-2 text-[9px] leading-4 text-[#15803d]/75">
+                  Drag the outlined text on the canvas. Arrow keys fine-tune its position.
+                </p>
+              </div>
+            )}
 
             <div className="my-5 h-px bg-slate-100" />
             <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
@@ -727,8 +879,11 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => commitPixels(createBlankPixels(resolution))}
-                disabled={!hasPaint(pixels)}
+                onClick={() => {
+                  commitPixels(createBlankPixels(resolution))
+                  setTextDraft(null)
+                }}
+                disabled={!hasPaint(pixels) && !textDraft}
                 className="tool-utility xl:col-span-2"
                 title="Clear canvas"
               >
@@ -789,7 +944,7 @@ export default function App() {
 
             <div className="canvas-workspace flex min-h-[540px] max-w-full items-center justify-center overflow-auto p-8 sm:p-12">
               <PixelCanvas
-                pixels={pixels}
+                pixels={displayPixels}
                 resolution={resolution}
                 zoom={zoom}
                 showGrid={showGrid}
@@ -800,12 +955,18 @@ export default function App() {
                 onPick={pickColor}
                 onImageDrop={(file) => void processImageFile(file)}
                 isImporting={isImporting}
+                textSelection={
+                  textDraft && renderedText
+                    ? { x: textDraft.x, y: textDraft.y, bounds: renderedText.bounds }
+                    : null
+                }
+                onMoveText={moveText}
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4">
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-500">Tip:</span> Arrow keys move the artwork, right-click erases, and Space creates a snapshot
+                <span className="font-semibold text-slate-500">Tip:</span> Drag placed text freely, use arrow keys for precise movement, and Space creates a snapshot
               </p>
               <div className="flex gap-2">
                 {editingFrameId && (
@@ -845,7 +1006,7 @@ export default function App() {
                 </span>
               </div>
               <PixelPreview
-                pixels={previewPixels ?? pixels}
+                pixels={previewPixels ?? displayPixels}
                 resolution={resolution}
                 className="mx-auto aspect-square w-full max-w-56 rounded-xl ring-1 ring-white/10"
               />
