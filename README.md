@@ -12,6 +12,8 @@ Pixel Loop is a local-first pixel animation studio built with React. Draw frame-
 - Image import through the upload button or drag and drop
 - PNG, JPG, WebP, and the first frame of GIF files supported
 - Aspect-ratio-preserving, nearest-neighbor image conversion
+- AI-agent-friendly `pixel-loop/v1` animation JSON import
+- Live JSON validation with frame, row, and column error messages
 - Snapshot-based animation workflow
 - Frame editing, duplication, deletion, and drag-to-reorder
 - Animation preview with adjustable playback speed from 1–24 FPS
@@ -57,6 +59,16 @@ Use either method:
 
 The image is centered, scaled to fit the current canvas without changing its aspect ratio, and converted into editable pixels. Importing over painted content requires confirmation and can be undone.
 
+### Import an AI-Generated Animation
+
+1. Give [the agent instructions](docs/PIXEL_LOOP_AGENT_INSTRUCTIONS.md) to Codex, Claude Code, or another AI agent.
+2. Ask it to generate an animation and return only `pixel-loop/v1` JSON.
+3. Select **Import JSON** in Pixel Loop.
+4. Paste the generated JSON and review the live validation summary.
+5. Select **Import animation** to replace the current project.
+
+The format uses compact palette symbols and fixed-width rows, making it readable, token-efficient, and easy to validate. See the complete [format specification](docs/pixel-loop-format.md) and [JSON Schema](docs/pixel-loop.schema.json).
+
 ### Work with Frames
 
 - Select a frame thumbnail to edit it.
@@ -81,6 +93,7 @@ GIFs use nearest-neighbor scaling, preserve crisp pixel edges, and loop forever.
 | `E` | Eraser |
 | `I` | Eyedropper |
 | `Space` | Create a snapshot |
+| `Arrow keys` | Move all canvas pixels by one cell |
 | `Cmd/Ctrl + Z` | Undo |
 | `Cmd/Ctrl + Shift + Z` | Redo |
 
@@ -127,8 +140,14 @@ npm run build
 ```text
 src/
 ├── components/       UI, canvas, preview, timeline, and dialogs
+├── hooks/            Reusable pixel history state
 ├── lib/              Pixel, image import, GIF export, and storage logic
 ├── App.tsx           Application state and workflows
 ├── styles.css        Tailwind entrypoint and shared visual styles
 └── types.ts          Project and animation types
+
+docs/
+├── PIXEL_LOOP_AGENT_INSTRUCTIONS.md
+├── pixel-loop-format.md
+└── pixel-loop.schema.json
 ```

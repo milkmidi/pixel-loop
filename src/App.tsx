@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import {
+  Braces,
   Camera,
   Check,
   Download,
@@ -21,12 +22,21 @@ import {
   WandSparkles,
 } from 'lucide-react'
 import { ExportDialog } from './components/ExportDialog'
+import { ImportAnimationDialog } from './components/ImportAnimationDialog'
 import { PixelCanvas } from './components/PixelCanvas'
 import { PixelPreview } from './components/PixelPreview'
 import { Timeline } from './components/Timeline'
 import { downloadGif, encodeGif } from './lib/exportGif'
 import { importImageFile } from './lib/importImage'
-import { createBlankPixels, hasPaint, normalizeHex, pixelsEqual } from './lib/pixels'
+import type { ParsedAnimation } from './lib/importAnimationJson'
+import {
+  createBlankPixels,
+  hasPaint,
+  normalizeHex,
+  pixelsEqual,
+  shiftPixels,
+  type PixelShiftDirection,
+} from './lib/pixels'
 import { loadProject, saveProject } from './lib/storage'
 import { usePixelHistory } from './hooks/usePixelHistory'
 import {
@@ -68,6 +78,12 @@ function newId(): string {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+function defaultZoomForResolution(resolution: Resolution): number {
+  if (resolution === 16) return 24
+  if (resolution === 32) return 12
+  return 6
+}
+
 function isTextInput(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLInputElement ||
@@ -100,7 +116,7 @@ export default function App() {
   const [colorDraft, setColorDraft] = useState(DEFAULT_COLOR)
   const [fps, setFps] = useState(8)
   const [exportScale, setExportScale] = useState(4)
-  const [zoom, setZoom] = useState(12)
+  const [zoom, setZoom] = useState(initial.zoom)
   const [showGrid, setShowGrid] = useState(true)
   const [transparentBackground, setTransparentBackground] = useState(true)
   const [backgroundColor, setBackgroundColor] = useState('#ffffff')
@@ -111,6 +127,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [previewIndex, setPreviewIndex] = useState(0)
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [showImportAnimation, setShowImportAnimation] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -134,7 +151,7 @@ export default function App() {
         setColorDraft(project.color ?? DEFAULT_COLOR)
         setFps(project.fps ?? 8)
         setExportScale(project.exportScale ?? 4)
-        setZoom(project.zoom ?? (project.resolution === 16 ? 24 : project.resolution === 32 ? 12 : 6))
+        setZoom(project.zoom ?? defaultZoomForResolution(project.resolution))
         setShowGrid(project.showGrid ?? true)
         setTransparentBackground(project.transparentBackground ?? true)
         setBackgroundColor(project.backgroundColor ?? '#ffffff')
@@ -211,8 +228,8 @@ export default function App() {
     if (frames.length < 2) setIsPlaying(false)
   }, [frames.length, previewIndex])
 
-  function handleDraw(indices: number[]) {
-    const nextColor = tool === 'eraser' ? null : color
+  function handleDraw(indices: number[], forceErase = false) {
+    const nextColor = forceErase || tool === 'eraser' ? null : color
     setPixels((current) => {
       const next = current.slice()
       indices.forEach((index) => {
@@ -225,6 +242,7 @@ export default function App() {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (isTextInput(event.target)) return
+      if (showImportAnimation || showExportDialog) return
       const command = event.metaKey || event.ctrlKey
       if (command && event.key.toLowerCase() === 'z') {
         event.preventDefault()
@@ -235,6 +253,18 @@ export default function App() {
       if (!command && event.code === 'Space' && !event.repeat) {
         event.preventDefault()
         snapshot()
+        return
+      }
+      const arrowDirections: Partial<Record<string, PixelShiftDirection>> = {
+        ArrowUp: 'up',
+        ArrowDown: 'down',
+        ArrowLeft: 'left',
+        ArrowRight: 'right',
+      }
+      const direction = arrowDirections[event.key]
+      if (!command && !event.altKey && direction) {
+        event.preventDefault()
+        commitPixels((current) => shiftPixels(current, resolution, direction))
         return
       }
       if (!command && event.key.toLowerCase() === 'p') setTool('pencil')
@@ -300,6 +330,46 @@ export default function App() {
     input.value = ''
   }
 
+  function importAnimation(animation: ParsedAnimation) {
+    if (
+      (hasPaint(pixels) || frames.length > 0) &&
+      !window.confirm('Importing this animation will replace the current project. Continue?')
+    ) {
+      return
+    }
+
+    const importedFrames: AnimationFrame[] = animation.frames.map((framePixels, index) => ({
+      id: newId(),
+      pixels: framePixels.slice(),
+      createdAt: Date.now() + index,
+    }))
+    const firstFrame = importedFrames[0]
+    const firstPaletteColor = Object.values(animation.palette)[0] ?? DEFAULT_COLOR
+
+    setResolution(animation.resolution)
+    setPixels(firstFrame.pixels.slice())
+    setBaselinePixels(firstFrame.pixels.slice())
+    setFrames(importedFrames)
+    setEditingFrameId(firstFrame.id)
+    setTool('pencil')
+    setColor(firstPaletteColor)
+    setColorDraft(firstPaletteColor)
+    setFps(animation.fps)
+    setExportScale(4)
+    setZoom(defaultZoomForResolution(animation.resolution))
+    setShowGrid(true)
+    setTransparentBackground(animation.transparentBackground)
+    setBackgroundColor(animation.backgroundColor)
+    setIsPlaying(false)
+    setPreviewIndex(0)
+    setShowExportDialog(false)
+    setShowImportAnimation(false)
+    resetHistory()
+    setToast(
+      `Imported ${importedFrames.length} frame${importedFrames.length === 1 ? '' : 's'} from JSON`,
+    )
+  }
+
   function changeResolution(nextResolution: Resolution) {
     if (nextResolution === resolution) return
     if (
@@ -315,7 +385,7 @@ export default function App() {
     setFrames([])
     setEditingFrameId(null)
     setPreviewIndex(0)
-    setZoom(nextResolution === 16 ? 24 : nextResolution === 32 ? 12 : 6)
+    setZoom(defaultZoomForResolution(nextResolution))
     resetHistory()
   }
 
@@ -346,6 +416,7 @@ export default function App() {
     setIsPlaying(false)
     setPreviewIndex(0)
     setShowExportDialog(false)
+    setShowImportAnimation(false)
     resetHistory()
     setToast('Project reset complete')
   }
@@ -538,6 +609,15 @@ export default function App() {
             </button>
             <button
               type="button"
+              onClick={() => setShowImportAnimation(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] sm:px-4"
+              title="Paste pixel-loop/v1 animation JSON"
+            >
+              <Braces size={16} />
+              <span className="hidden lg:inline">Import JSON</span>
+            </button>
+            <button
+              type="button"
               onClick={requestExport}
               disabled={isExporting || !hydrated}
               className="inline-flex items-center gap-2 rounded-xl bg-[#16a34a] px-3.5 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-700/15 transition hover:-translate-y-0.5 hover:bg-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60 sm:px-5"
@@ -725,7 +805,7 @@ export default function App() {
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4">
               <p className="text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-500">Tip:</span> Drop images onto the canvas, use P / E / I to switch tools, and press Space to snapshot
+                <span className="font-semibold text-slate-500">Tip:</span> Arrow keys move the artwork, right-click erases, and Space creates a snapshot
               </p>
               <div className="flex gap-2">
                 {editingFrameId && (
@@ -917,6 +997,13 @@ export default function App() {
           onInclude={() => performExport(true)}
           onSavedOnly={() => performExport(false)}
           onCancel={() => setShowExportDialog(false)}
+        />
+      )}
+
+      {showImportAnimation && (
+        <ImportAnimationDialog
+          onClose={() => setShowImportAnimation(false)}
+          onImport={importAnimation}
         />
       )}
 

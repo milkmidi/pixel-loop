@@ -10,7 +10,7 @@ interface PixelCanvasProps {
   showGrid: boolean
   tool: DrawingTool
   onStrokeStart: () => void
-  onDraw: (indices: number[]) => void
+  onDraw: (indices: number[], forceErase?: boolean) => void
   onStrokeEnd: () => void
   onPick: (pixel: Pixel) => void
   onImageDrop: (file: File) => void
@@ -32,6 +32,7 @@ export function PixelCanvas({
 }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activePointerRef = useRef<number | null>(null)
+  const activeEraseRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
   const dragDepthRef = useRef(0)
   const [isDraggingImage, setIsDraggingImage] = useState(false)
@@ -65,10 +66,12 @@ export function PixelCanvas({
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (event.button !== 0 && event.pointerType === 'mouse') return
+    const isMouse = event.pointerType === 'mouse'
+    const isRightClick = isMouse && event.button === 2
+    if (isMouse && event.button !== 0 && !isRightClick) return
     const point = pointFromEvent(event)
 
-    if (tool === 'eyedropper') {
+    if (tool === 'eyedropper' && !isRightClick) {
       onPick(pixels[point.y * resolution + point.x])
       return
     }
@@ -76,9 +79,10 @@ export function PixelCanvas({
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     activePointerRef.current = event.pointerId
+    activeEraseRef.current = isRightClick
     lastPointRef.current = point
     onStrokeStart()
-    onDraw([point.y * resolution + point.x])
+    onDraw([point.y * resolution + point.x], isRightClick)
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -86,13 +90,14 @@ export function PixelCanvas({
     event.preventDefault()
     const point = pointFromEvent(event)
     const indices = drawLineIndices(lastPointRef.current, point, resolution)
-    onDraw(indices)
+    onDraw(indices, activeEraseRef.current)
     lastPointRef.current = point
   }
 
   function finishStroke(event: React.PointerEvent<HTMLCanvasElement>) {
     if (activePointerRef.current !== event.pointerId) return
     activePointerRef.current = null
+    activeEraseRef.current = false
     lastPointRef.current = null
     onStrokeEnd()
   }
@@ -149,6 +154,7 @@ export function PixelCanvas({
         onPointerMove={handlePointerMove}
         onPointerUp={finishStroke}
         onPointerCancel={finishStroke}
+        onContextMenu={(event) => event.preventDefault()}
       />
       {showGrid && (
         <div

@@ -5,6 +5,7 @@ import {
   normalizeHex,
   pixelsEqual,
   pixelsToRgba,
+  shiftPixels,
 } from './pixels'
 
 describe('pixel utilities', () => {
@@ -33,5 +34,31 @@ describe('pixel utilities', () => {
     const rgba = pixelsToRgba(['#ff0000', null, null, null], 2, 2, true, '#ffffff')
     expect(Array.from(rgba.slice(0, 4))).toEqual([255, 0, 0, 255])
     expect(Array.from(rgba.slice(8, 12))).toEqual([255, 255, 255, 0])
+  })
+
+  it.each([
+    ['up', 1],
+    ['down', 7],
+    ['left', 3],
+    ['right', 5],
+  ] as const)('shifts the complete canvas one pixel %s', (direction, expectedIndex) => {
+    const pixels = createBlankPixels(3)
+    pixels[4] = '#16a34a'
+
+    const shifted = shiftPixels(pixels, 3, direction)
+
+    expect(shifted[expectedIndex]).toBe('#16a34a')
+    expect(shifted.filter(Boolean)).toHaveLength(1)
+    expect(pixels[4]).toBe('#16a34a')
+  })
+
+  it('clips pixels that move beyond the canvas boundary', () => {
+    const pixels = createBlankPixels(3)
+    pixels[0] = '#ef4444'
+    pixels[4] = '#16a34a'
+
+    const shifted = shiftPixels(pixels, 3, 'up')
+
+    expect(shifted.filter(Boolean)).toEqual(['#16a34a'])
   })
 })

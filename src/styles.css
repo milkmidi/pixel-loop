@@ -97,6 +97,10 @@ input:focus-visible {
   .setting-row small {
     @apply text-[10px] text-slate-400;
   }
+
+  .summary-chip {
+    @apply rounded-md border border-green-200/70 bg-white/70 px-2 py-1;
+  }
 }
 
 input[type="range"] {

@@ -52,7 +52,11 @@ export function usePixelHistory(
   }, [addUndoEntry])
 
   const commitPixels = useCallback(
-    (next: Pixel[]) => {
+    (action: SetStateAction<Pixel[]>) => {
+      const next =
+        typeof action === 'function'
+          ? (action as (current: Pixel[]) => Pixel[])(pixelsRef.current)
+          : action
       if (pixelsEqual(pixelsRef.current, next)) return
       addUndoEntry(pixelsRef.current)
       setPixels(next)
