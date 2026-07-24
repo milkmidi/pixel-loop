@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ImagePlus, LoaderCircle } from 'lucide-react'
-import type { DrawingTool, Pixel } from '../types'
+import type { DrawingTool, Pixel, PixelTextBounds } from '../types'
 import { drawLineIndices } from '../lib/pixels'
 
 interface PixelCanvasProps {
@@ -10,11 +10,13 @@ interface PixelCanvasProps {
   showGrid: boolean
   tool: DrawingTool
   onStrokeStart: () => void
-  onDraw: (indices: number[]) => void
+  onDraw: (indices: number[], forceErase?: boolean) => void
   onStrokeEnd: () => void
   onPick: (pixel: Pixel) => void
   onImageDrop: (file: File) => void
   isImporting: boolean
+  textSelection?: { x: number; y: number; bounds: PixelTextBounds } | null
+  onMoveText?: (x: number, y: number) => void
 }
 
 export function PixelCanvas({
@@ -29,10 +31,14 @@ export function PixelCanvas({
   onPick,
   onImageDrop,
   isImporting,
+  textSelection = null,
+  onMoveText,
 }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activePointerRef = useRef<number | null>(null)
+  const activeEraseRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
+  const textDragOffsetRef = useRef<{ x: number; y: number } | null>(null)
   const dragDepthRef = useRef(0)
   const [isDraggingImage, setIsDraggingImage] = useState(false)
 
@@ -65,10 +71,32 @@ export function PixelCanvas({
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (event.button !== 0 && event.pointerType === 'mouse') return
+    const isMouse = event.pointerType === 'mouse'
+    const isRightClick = isMouse && event.button === 2
+    if (isMouse && event.button !== 0 && !isRightClick) return
     const point = pointFromEvent(event)
 
-    if (tool === 'eyedropper') {
+    if (tool === 'text') {
+      if (!textSelection || !onMoveText || isRightClick) return
+      const { bounds } = textSelection
+      const isInsideText =
+        point.x >= bounds.x &&
+        point.x < bounds.x + bounds.width &&
+        point.y >= bounds.y &&
+        point.y < bounds.y + bounds.height
+      if (!isInsideText) return
+
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      activePointerRef.current = event.pointerId
+      textDragOffsetRef.current = {
+        x: point.x - textSelection.x,
+        y: point.y - textSelection.y,
+      }
+      return
+    }
+
+    if (tool === 'eyedropper' && !isRightClick) {
       onPick(pixels[point.y * resolution + point.x])
       return
     }
@@ -76,25 +104,38 @@ export function PixelCanvas({
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     activePointerRef.current = event.pointerId
+    activeEraseRef.current = isRightClick
     lastPointRef.current = point
     onStrokeStart()
-    onDraw([point.y * resolution + point.x])
+    onDraw([point.y * resolution + point.x], isRightClick)
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (activePointerRef.current !== event.pointerId || !lastPointRef.current) return
+    if (activePointerRef.current !== event.pointerId) return
     event.preventDefault()
     const point = pointFromEvent(event)
+
+    if (textDragOffsetRef.current && onMoveText) {
+      onMoveText(
+        point.x - textDragOffsetRef.current.x,
+        point.y - textDragOffsetRef.current.y,
+      )
+      return
+    }
+
+    if (!lastPointRef.current) return
     const indices = drawLineIndices(lastPointRef.current, point, resolution)
-    onDraw(indices)
+    onDraw(indices, activeEraseRef.current)
     lastPointRef.current = point
   }
 
   function finishStroke(event: React.PointerEvent<HTMLCanvasElement>) {
     if (activePointerRef.current !== event.pointerId) return
     activePointerRef.current = null
+    activeEraseRef.current = false
     lastPointRef.current = null
-    onStrokeEnd()
+    textDragOffsetRef.current = null
+    if (tool !== 'text') onStrokeEnd()
   }
 
   const displaySize = resolution * zoom
@@ -143,13 +184,32 @@ export function PixelCanvas({
         height={resolution}
         aria-label={`${resolution} by ${resolution} pixel drawing canvas`}
         className={`absolute inset-0 h-full w-full touch-none select-none [image-rendering:pixelated] ${
-          tool === 'eyedropper' ? 'cursor-crosshair' : 'cursor-cell'
+          tool === 'eyedropper'
+            ? 'cursor-crosshair'
+            : tool === 'text'
+              ? textSelection
+                ? 'cursor-grab active:cursor-grabbing'
+                : 'cursor-default'
+              : 'cursor-cell'
         }`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishStroke}
         onPointerCancel={finishStroke}
+        onContextMenu={(event) => event.preventDefault()}
       />
+      {tool === 'text' && textSelection && (
+        <div
+          className="pointer-events-none absolute z-10 border border-dashed border-[#16a34a] shadow-[0_0_0_1px_rgba(255,255,255,0.85)]"
+          style={{
+            left: textSelection.bounds.x * zoom,
+            top: textSelection.bounds.y * zoom,
+            width: textSelection.bounds.width * zoom,
+            height: textSelection.bounds.height * zoom,
+          }}
+          aria-hidden="true"
+        />
+      )}
       {showGrid && (
         <div
           className="pointer-events-none absolute inset-0 opacity-25"

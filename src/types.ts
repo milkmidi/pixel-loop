@@ -2,11 +2,43 @@ export const RESOLUTIONS = [16, 32, 64] as const
 export type Resolution = (typeof RESOLUTIONS)[number]
 
 export type Pixel = string | null
-export type DrawingTool = 'pencil' | 'eraser' | 'eyedropper'
+export type DrawingTool = 'pencil' | 'eraser' | 'eyedropper' | 'text'
+
+export interface PixelTextPlacement {
+  text: string
+  x: number
+  y: number
+  fontSize: number
+  color: string
+}
+
+export interface PixelTextBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 export interface AnimationFrame {
   id: string
   pixels: Pixel[]
+  createdAt: number
+}
+
+export type AppMode = 'draw' | 'gif'
+
+export interface PhotoCanvasSize {
+  width: number
+  height: number
+}
+
+export interface PhotoFrame {
+  id: string
+  src: string
+  naturalWidth: number
+  naturalHeight: number
+  offsetX: number
+  offsetY: number
   createdAt: number
 }
 
@@ -24,4 +56,7 @@ export interface ProjectState {
   showGrid: boolean
   transparentBackground: boolean
   backgroundColor: string
+  mode?: AppMode
+  photoCanvas?: PhotoCanvasSize | null
+  photoFrames?: PhotoFrame[]
 }

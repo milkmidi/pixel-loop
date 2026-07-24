@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   DndContext,
   PointerSensor,
@@ -14,42 +15,47 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Copy, GripVertical, Plus, Trash2 } from 'lucide-react'
-import type { AnimationFrame } from '../types'
-import { PixelPreview } from './PixelPreview'
 
-interface TimelineProps {
-  frames: AnimationFrame[]
-  resolution: number
+interface TimelineFrame {
+  id: string
+}
+
+interface TimelineProps<T extends TimelineFrame> {
+  frames: T[]
   editingFrameId: string | null
-  onSelect: (frame: AnimationFrame) => void
+  renderPreview: (frame: T, index: number) => ReactNode
+  onSelect: (frame: T) => void
   onDelete: (id: string) => void
   onDuplicate: (id: string) => void
   onReorder: (activeId: string, overId: string) => void
-  onSnapshot: () => void
+  onAdd: () => void
+  addLabel: string
+  addDisabled?: boolean
+  limit?: number
+  emptyTitle: string
+  emptyHint: string
 }
 
 interface SortableFrameProps {
-  frame: AnimationFrame
+  id: string
   index: number
-  resolution: number
   selected: boolean
+  preview: ReactNode
   onSelect: () => void
   onDelete: () => void
   onDuplicate: () => void
 }
 
 function SortableFrame({
-  frame,
+  id,
   index,
-  resolution,
   selected,
+  preview,
   onSelect,
   onDelete,
   onDuplicate,
 }: SortableFrameProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: frame.id,
-  })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
 
   return (
     <article
@@ -76,12 +82,7 @@ function SortableFrame({
         </span>
       </div>
       <button type="button" className="block w-full" onClick={onSelect}>
-        <PixelPreview
-          pixels={frame.pixels}
-          resolution={resolution}
-          label={`Frame ${index + 1} preview`}
-          className="aspect-square w-full rounded-lg ring-1 ring-white/10"
-        />
+        {preview}
       </button>
       <div className="mt-2 flex justify-end gap-1 opacity-60 transition group-hover:opacity-100">
         <button
@@ -105,16 +106,21 @@ function SortableFrame({
   )
 }
 
-export function Timeline({
+export function Timeline<T extends TimelineFrame>({
   frames,
-  resolution,
   editingFrameId,
+  renderPreview,
   onSelect,
   onDelete,
   onDuplicate,
   onReorder,
-  onSnapshot,
-}: TimelineProps) {
+  onAdd,
+  addLabel,
+  addDisabled = false,
+  limit = 100,
+  emptyTitle,
+  emptyHint,
+}: TimelineProps<T>) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 5 } }),
@@ -134,17 +140,19 @@ export function Timeline({
           </p>
           <div className="flex items-baseline gap-2">
             <h2 className="text-lg font-semibold">Frames</h2>
-            <span className="text-xs text-white/40">{frames.length} / 100</span>
+            <span className="text-xs text-white/40">
+              {frames.length} / {limit}
+            </span>
           </div>
         </div>
         <button
           type="button"
-          onClick={onSnapshot}
-          disabled={frames.length >= 100}
+          onClick={onAdd}
+          disabled={addDisabled}
           className="inline-flex items-center gap-2 rounded-xl bg-[#16a34a] px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-950/20 transition hover:bg-[#15803d] disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Plus size={16} strokeWidth={2.5} />
-          Snapshot frame
+          {addLabel}
         </button>
       </div>
 
@@ -154,10 +162,10 @@ export function Timeline({
             {frames.map((frame, index) => (
               <SortableFrame
                 key={frame.id}
-                frame={frame}
+                id={frame.id}
                 index={index}
-                resolution={resolution}
                 selected={editingFrameId === frame.id}
+                preview={renderPreview(frame, index)}
                 onSelect={() => onSelect(frame)}
                 onDelete={() => onDelete(frame.id)}
                 onDuplicate={() => onDuplicate(frame.id)}
@@ -166,12 +174,13 @@ export function Timeline({
             {frames.length === 0 && (
               <button
                 type="button"
-                onClick={onSnapshot}
-                className="flex w-full min-w-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 px-8 py-7 text-center text-white/45 transition hover:border-[#4ade80]/50 hover:bg-white/5 hover:text-white/70"
+                onClick={onAdd}
+                disabled={addDisabled}
+                className="flex w-full min-w-64 flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 px-8 py-7 text-center text-white/45 transition hover:border-[#4ade80]/50 hover:bg-white/5 hover:text-white/70 disabled:cursor-not-allowed"
               >
                 <Plus className="mb-2" size={22} />
-                <span className="text-sm font-semibold">Create your first snapshot</span>
-                <span className="mt-1 text-xs text-white/30">The canvas stays in place so you can draw the next frame</span>
+                <span className="text-sm font-semibold">{emptyTitle}</span>
+                <span className="mt-1 text-xs text-white/30">{emptyHint}</span>
               </button>
             )}
           </div>

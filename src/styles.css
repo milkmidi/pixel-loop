@@ -82,6 +82,10 @@ input:focus-visible {
     @apply flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-800;
   }
 
+  .photo-nudge {
+    @apply flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-[#16a34a]/40 hover:bg-green-50 hover:text-[#15803d] disabled:cursor-not-allowed disabled:opacity-30;
+  }
+
   .setting-row {
     @apply mb-4 flex items-center justify-between gap-3 border-b border-slate-100 pb-4;
   }
@@ -96,6 +100,10 @@ input:focus-visible {
 
   .setting-row small {
     @apply text-[10px] text-slate-400;
+  }
+
+  .summary-chip {
+    @apply rounded-md border border-green-200/70 bg-white/70 px-2 py-1;
   }
 }
 

@@ -1,5 +1,7 @@
 import type { Pixel } from '../types'
 
+export type PixelShiftDirection = 'up' | 'down' | 'left' | 'right'
+
 export function createBlankPixels(size: number): Pixel[] {
   return Array<Pixel>(size * size).fill(null)
 }
@@ -95,4 +97,31 @@ export function pixelsToRgba(
 
 export function hasPaint(pixels: Pixel[]): boolean {
   return pixels.some(Boolean)
+}
+
+export function shiftPixels(
+  pixels: Pixel[],
+  size: number,
+  direction: PixelShiftDirection,
+): Pixel[] {
+  const shifted = createBlankPixels(size)
+  const offsets: Record<PixelShiftDirection, { x: number; y: number }> = {
+    up: { x: 0, y: -1 },
+    down: { x: 0, y: 1 },
+    left: { x: -1, y: 0 },
+    right: { x: 1, y: 0 },
+  }
+  const offset = offsets[direction]
+
+  pixels.forEach((pixel, index) => {
+    if (!pixel) return
+    const x = index % size
+    const y = Math.floor(index / size)
+    const nextX = x + offset.x
+    const nextY = y + offset.y
+    if (nextX < 0 || nextX >= size || nextY < 0 || nextY >= size) return
+    shifted[nextY * size + nextX] = pixel
+  })
+
+  return shifted
 }
