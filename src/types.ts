@@ -25,6 +25,23 @@ export interface AnimationFrame {
   createdAt: number
 }
 
+export type AppMode = 'draw' | 'gif'
+
+export interface PhotoCanvasSize {
+  width: number
+  height: number
+}
+
+export interface PhotoFrame {
+  id: string
+  src: string
+  naturalWidth: number
+  naturalHeight: number
+  offsetX: number
+  offsetY: number
+  createdAt: number
+}
+
 export interface ProjectState {
   version: 1
   resolution: Resolution
@@ -39,4 +56,7 @@ export interface ProjectState {
   showGrid: boolean
   transparentBackground: boolean
   backgroundColor: string
+  mode?: AppMode
+  photoCanvas?: PhotoCanvasSize | null
+  photoFrames?: PhotoFrame[]
 }

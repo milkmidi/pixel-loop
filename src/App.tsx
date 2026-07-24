@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   Braces,
   Camera,
   Check,
   Download,
   Eraser,
+  Film,
   FolderX,
   Grid3X3,
   LoaderCircle,
   ImagePlus,
+  Locate,
   Pause,
   Pencil,
   Pipette,
@@ -24,11 +30,22 @@ import {
 } from 'lucide-react'
 import { ExportDialog } from './components/ExportDialog'
 import { ImportAnimationDialog } from './components/ImportAnimationDialog'
+import { PhotoCanvas } from './components/PhotoCanvas'
+import { PhotoFramePreview } from './components/PhotoFramePreview'
 import { PixelCanvas } from './components/PixelCanvas'
 import { PixelPreview } from './components/PixelPreview'
 import { Timeline } from './components/Timeline'
 import { downloadGif, encodeGif } from './lib/exportGif'
+import { encodePhotoGif } from './lib/exportPhotoGif'
 import { importImageFile } from './lib/importImage'
+import {
+  MAX_PHOTO_FRAMES,
+  centeredOffset,
+  clampOffset,
+  computeCanvasSize,
+  loadImageFile,
+  moveStep,
+} from './lib/photoFrames'
 import { renderPixelText } from './lib/pixelText'
 import type { ParsedAnimation } from './lib/importAnimationJson'
 import {
@@ -44,12 +61,24 @@ import { usePixelHistory } from './hooks/usePixelHistory'
 import {
   RESOLUTIONS,
   type AnimationFrame,
+  type AppMode,
   type DrawingTool,
   type Pixel,
+  type PhotoCanvasSize,
+  type PhotoFrame,
   type PixelTextPlacement,
   type ProjectState,
   type Resolution,
 } from './types'
+
+const PHOTO_MOVE_OFFSETS: Record<PixelShiftDirection, { x: number; y: number }> = {
+  up: { x: 0, y: -1 },
+  down: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+  right: { x: 1, y: 0 },
+}
+/** Keep photo GIF output within a sane pixel budget regardless of the chosen export scale. */
+const MAX_PHOTO_EXPORT_DIM = 1024
 
 const DEFAULT_COLOR = '#16a34a'
 const COLOR_PRESETS = ['#1a1a2e', '#16a34a', '#f59e0b', '#ef4444', '#3b82f6', '#a855f7']
@@ -73,6 +102,9 @@ const defaultProject = (): ProjectState => ({
   showGrid: true,
   transparentBackground: true,
   backgroundColor: '#ffffff',
+  mode: 'draw',
+  photoCanvas: null,
+  photoFrames: [],
 })
 
 function newId(): string {
@@ -114,6 +146,10 @@ export default function App() {
   const [baselinePixels, setBaselinePixels] = useState<Pixel[]>(initial.baselinePixels)
   const [frames, setFrames] = useState<AnimationFrame[]>(initial.frames)
   const [editingFrameId, setEditingFrameId] = useState<string | null>(null)
+  const [mode, setMode] = useState<AppMode>('draw')
+  const [photoCanvas, setPhotoCanvas] = useState<PhotoCanvasSize | null>(null)
+  const [photoFrames, setPhotoFrames] = useState<PhotoFrame[]>([])
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null)
   const [tool, setTool] = useState<DrawingTool>('pencil')
   const [color, setColor] = useState(DEFAULT_COLOR)
   const [colorDraft, setColorDraft] = useState(DEFAULT_COLOR)
@@ -138,6 +174,7 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const photoInputRef = useRef<HTMLInputElement>(null)
   const renderedText = useMemo(
     () => (textDraft ? renderPixelText(pixels, resolution, textDraft) : null),
     [pixels, resolution, textDraft],
@@ -147,6 +184,19 @@ export default function App() {
     () => Boolean(textDraft) || !pixelsEqual(pixels, baselinePixels),
     [pixels, baselinePixels, textDraft],
   )
+  const photoMode = mode === 'gif'
+  const selectedPhoto = useMemo(
+    () => photoFrames.find((frame) => frame.id === selectedPhotoId) ?? null,
+    [photoFrames, selectedPhotoId],
+  )
+  const timelineLength = photoMode ? photoFrames.length : frames.length
+  // Photo GIFs are capped to a sane longest side regardless of the chosen scale.
+  const photoExportScale = photoCanvas
+    ? Math.max(
+        1,
+        Math.min(exportScale, Math.floor(MAX_PHOTO_EXPORT_DIM / Math.max(photoCanvas.width, photoCanvas.height))),
+      )
+    : exportScale
 
   useEffect(() => {
     let cancelled = false
@@ -169,6 +219,10 @@ export default function App() {
         setShowGrid(project.showGrid ?? true)
         setTransparentBackground(project.transparentBackground ?? true)
         setBackgroundColor(project.backgroundColor ?? '#ffffff')
+        setMode(project.mode === 'gif' ? 'gif' : 'draw')
+        setPhotoCanvas(project.photoCanvas ?? null)
+        setPhotoFrames(project.photoFrames ?? [])
+        setSelectedPhotoId(project.photoFrames?.[0]?.id ?? null)
       })
       .catch(() => setSaveStatus('error'))
       .finally(() => {
@@ -201,6 +255,9 @@ export default function App() {
         showGrid,
         transparentBackground,
         backgroundColor,
+        mode,
+        photoCanvas,
+        photoFrames,
       })
         .then(() => setSaveStatus('saved'))
         .catch(() => setSaveStatus('error'))
@@ -221,6 +278,9 @@ export default function App() {
     showGrid,
     transparentBackground,
     backgroundColor,
+    mode,
+    photoCanvas,
+    photoFrames,
   ])
 
   useEffect(() => {
@@ -230,17 +290,17 @@ export default function App() {
   }, [toast])
 
   useEffect(() => {
-    if (!isPlaying || frames.length < 2) return
+    if (!isPlaying || timelineLength < 2) return
     const timer = window.setInterval(() => {
-      setPreviewIndex((current) => (current + 1) % frames.length)
+      setPreviewIndex((current) => (current + 1) % timelineLength)
     }, 1000 / fps)
     return () => window.clearInterval(timer)
-  }, [isPlaying, frames.length, fps])
+  }, [isPlaying, timelineLength, fps])
 
   useEffect(() => {
-    if (previewIndex >= frames.length) setPreviewIndex(Math.max(0, frames.length - 1))
-    if (frames.length < 2) setIsPlaying(false)
-  }, [frames.length, previewIndex])
+    if (previewIndex >= timelineLength) setPreviewIndex(Math.max(0, timelineLength - 1))
+    if (timelineLength < 2) setIsPlaying(false)
+  }, [timelineLength, previewIndex])
 
   function handleDraw(indices: number[], forceErase = false) {
     const nextColor = forceErase || tool === 'eraser' ? null : color
@@ -295,8 +355,37 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (isTextInput(event.target)) return
       if (showImportAnimation || showExportDialog) return
+      if (photoMode) {
+        // Only bail for real text fields — buttons (e.g. a just-clicked timeline
+        // frame or nudge arrow) keep focus, and arrows must still pan from there.
+        const target = event.target
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement
+        ) {
+          return
+        }
+        const photoDirections: Partial<Record<string, PixelShiftDirection>> = {
+          ArrowUp: 'up',
+          ArrowDown: 'down',
+          ArrowLeft: 'left',
+          ArrowRight: 'right',
+        }
+        const direction = photoDirections[event.key]
+        if (direction && selectedPhoto && photoCanvas) {
+          event.preventDefault()
+          const step = moveStep(photoCanvas)
+          movePhoto(
+            selectedPhoto.id,
+            PHOTO_MOVE_OFFSETS[direction].x * step,
+            PHOTO_MOVE_OFFSETS[direction].y * step,
+          )
+        }
+        return
+      }
+      if (isTextInput(event.target)) return
       const command = event.metaKey || event.ctrlKey
       if (command && event.key.toLowerCase() === 'z') {
         event.preventDefault()
@@ -396,6 +485,184 @@ export default function App() {
     input.value = ''
   }
 
+  function switchMode(nextMode: AppMode) {
+    if (nextMode === mode) return
+    setMode(nextMode)
+    setIsPlaying(false)
+    setPreviewIndex(0)
+    setToast(nextMode === 'gif' ? 'GIF maker mode' : 'Pixel draw mode')
+  }
+
+  async function addPhotoFiles(files: File[]) {
+    if (isImporting) return
+    const images = files.filter((file) => file.type.startsWith('image/'))
+    if (images.length === 0) return
+
+    const remaining = MAX_PHOTO_FRAMES - photoFrames.length
+    if (remaining <= 0) {
+      setToast(`The ${MAX_PHOTO_FRAMES}-frame limit has been reached`)
+      return
+    }
+    const batch = images.slice(0, remaining)
+
+    setIsImporting(true)
+    try {
+      let workingCanvas = photoCanvas
+      const created: PhotoFrame[] = []
+      for (const file of batch) {
+        const loaded = await loadImageFile(file)
+        if (!workingCanvas) workingCanvas = computeCanvasSize(loaded.width, loaded.height)
+        const offset = centeredOffset(loaded.width, loaded.height, workingCanvas)
+        created.push({
+          id: newId(),
+          src: loaded.src,
+          naturalWidth: loaded.width,
+          naturalHeight: loaded.height,
+          offsetX: offset.offsetX,
+          offsetY: offset.offsetY,
+          createdAt: Date.now() + created.length,
+        })
+      }
+
+      if (!photoCanvas && workingCanvas) setPhotoCanvas(workingCanvas)
+      const firstNewIndex = photoFrames.length
+      setPhotoFrames((current) => [...current, ...created])
+      if (!selectedPhotoId) setSelectedPhotoId(created[0]?.id ?? null)
+      if (photoFrames.length === 0) setPreviewIndex(firstNewIndex)
+
+      const label = created.length === 1 ? '1 photo' : `${created.length} photos`
+      setToast(
+        images.length > remaining ? `Added ${label} · frame limit reached` : `Added ${label}`,
+      )
+    } catch (error) {
+      if (error instanceof Error && error.message === 'IMAGE_TOO_LARGE') {
+        setToast('Images must be smaller than 20 MB')
+      } else if (error instanceof Error && error.message === 'UNSUPPORTED_IMAGE') {
+        setToast('Only PNG, JPG, WebP, and GIF files are supported')
+      } else {
+        console.error(error)
+        setToast('Could not load this image. Try another file')
+      }
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  async function handlePhotoInput(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const files = Array.from(input.files ?? [])
+    if (files.length > 0) await addPhotoFiles(files)
+    input.value = ''
+  }
+
+  function movePhoto(id: string, dx: number, dy: number) {
+    if (!photoCanvas) return
+    setPhotoFrames((current) =>
+      current.map((frame) => {
+        if (frame.id !== id) return frame
+        const clamped = clampOffset(frame.offsetX + dx, frame.offsetY + dy, frame, photoCanvas)
+        return { ...frame, ...clamped }
+      }),
+    )
+  }
+
+  function resetPhotoPosition(id: string) {
+    if (!photoCanvas) return
+    setPhotoFrames((current) =>
+      current.map((frame) => {
+        if (frame.id !== id) return frame
+        const offset = centeredOffset(frame.naturalWidth, frame.naturalHeight, photoCanvas)
+        return { ...frame, ...offset }
+      }),
+    )
+  }
+
+  function selectPhoto(frame: PhotoFrame) {
+    setSelectedPhotoId(frame.id)
+    setPreviewIndex(Math.max(0, photoFrames.findIndex((item) => item.id === frame.id)))
+  }
+
+  function deletePhotoFrame(id: string) {
+    const index = photoFrames.findIndex((frame) => frame.id === id)
+    if (index < 0) return
+    const next = photoFrames.filter((frame) => frame.id !== id)
+    setPhotoFrames(next)
+    if (selectedPhotoId === id) setSelectedPhotoId(next[Math.max(0, index - 1)]?.id ?? null)
+    if (next.length === 0) setPhotoCanvas(null)
+    setToast(`Deleted Frame ${index + 1}`)
+  }
+
+  function duplicatePhotoFrame(id: string) {
+    if (photoFrames.length >= MAX_PHOTO_FRAMES) {
+      setToast(`The ${MAX_PHOTO_FRAMES}-frame limit has been reached`)
+      return
+    }
+    const index = photoFrames.findIndex((frame) => frame.id === id)
+    if (index < 0) return
+    const duplicate: PhotoFrame = { ...photoFrames[index], id: newId(), createdAt: Date.now() }
+    const next = photoFrames.slice()
+    next.splice(index + 1, 0, duplicate)
+    setPhotoFrames(next)
+    setToast('Frame duplicated')
+  }
+
+  function reorderPhotoFrames(activeId: string, overId: string) {
+    setPhotoFrames((current) => {
+      const oldIndex = current.findIndex((frame) => frame.id === activeId)
+      const newIndex = current.findIndex((frame) => frame.id === overId)
+      return oldIndex < 0 || newIndex < 0 ? current : arrayMove(current, oldIndex, newIndex)
+    })
+  }
+
+  async function exportPhotos() {
+    if (!photoCanvas || photoFrames.length === 0) {
+      setToast('Upload at least one photo first')
+      return
+    }
+    setIsExporting(true)
+    try {
+      const bytes = await encodePhotoGif({
+        frames: photoFrames,
+        canvas: photoCanvas,
+        fps,
+        scale: photoExportScale,
+        transparentBackground,
+        backgroundColor,
+      })
+      const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '-')
+      downloadGif(bytes, `pixel-loop-gif-${stamp}.gif`)
+      setToast(
+        `GIF exported with ${photoFrames.length} frame${photoFrames.length === 1 ? '' : 's'}`,
+      )
+    } catch (error) {
+      console.error(error)
+      setToast('GIF export failed. Please try again')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  function nudgePhoto(direction: PixelShiftDirection) {
+    if (!selectedPhoto || !photoCanvas) return
+    const step = moveStep(photoCanvas)
+    movePhoto(
+      selectedPhoto.id,
+      PHOTO_MOVE_OFFSETS[direction].x * step,
+      PHOTO_MOVE_OFFSETS[direction].y * step,
+    )
+  }
+
+  function clearPhotos() {
+    if (photoFrames.length === 0) return
+    if (!window.confirm('Remove all photo frames? This cannot be undone.')) return
+    setPhotoFrames([])
+    setPhotoCanvas(null)
+    setSelectedPhotoId(null)
+    setPreviewIndex(0)
+    setIsPlaying(false)
+    setToast('All frames cleared')
+  }
+
   function importAnimation(animation: ParsedAnimation) {
     if (
       (hasPaint(pixels) || frames.length > 0) &&
@@ -485,6 +752,10 @@ export default function App() {
     setShowGrid(reset.showGrid)
     setTransparentBackground(reset.transparentBackground)
     setBackgroundColor(reset.backgroundColor)
+    setMode('draw')
+    setPhotoCanvas(null)
+    setPhotoFrames([])
+    setSelectedPhotoId(null)
     setIsPlaying(false)
     setPreviewIndex(0)
     setShowExportDialog(false)
@@ -610,6 +881,20 @@ export default function App() {
   }
 
   const previewPixels = frames.length > 0 ? frames[previewIndex]?.pixels : displayPixels
+  const previewPhoto =
+    photoFrames.length > 0
+      ? photoFrames[Math.min(previewIndex, photoFrames.length - 1)] ?? null
+      : null
+  const photoMoveButtons: Array<{
+    direction: PixelShiftDirection
+    icon: typeof ArrowUp
+    label: string
+  }> = [
+    { direction: 'up', icon: ArrowUp, label: 'Move up' },
+    { direction: 'left', icon: ArrowLeft, label: 'Move left' },
+    { direction: 'right', icon: ArrowRight, label: 'Move right' },
+    { direction: 'down', icon: ArrowDown, label: 'Move down' },
+  ]
   const toolOptions: Array<{
     id: DrawingTool
     label: string
@@ -647,7 +932,30 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden items-center gap-1.5 text-xs text-slate-400 md:flex">
+            <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm">
+              {(
+                [
+                  { id: 'draw', label: 'Draw', icon: Pencil },
+                  { id: 'gif', label: 'GIF Maker', icon: Film },
+                ] as const
+              ).map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => switchMode(id)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-bold transition sm:px-3 ${
+                    mode === id
+                      ? 'bg-[#1a1a2e] text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  aria-pressed={mode === id}
+                >
+                  <Icon size={15} />
+                  <span className="hidden sm:inline">{label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="hidden items-center gap-1.5 text-xs text-slate-400 lg:flex">
               {saveStatus === 'saving' || saveStatus === 'loading' ? (
                 <LoaderCircle size={13} className="animate-spin" />
               ) : saveStatus === 'error' ? (
@@ -663,54 +971,101 @@ export default function App() {
                     ? 'Autosave failed'
                     : 'Autosaved'}
             </div>
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              onChange={handleImageImport}
-              className="sr-only"
-              aria-label="Choose an image to import"
-            />
-            <button
-              type="button"
-              onClick={() => imageInputRef.current?.click()}
-              disabled={isImporting}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50 sm:px-4"
-              title="Supports PNG, JPG, WebP, and the first frame of GIF files"
-            >
-              {isImporting ? (
-                <LoaderCircle size={16} className="animate-spin" />
-              ) : (
-                <ImagePlus size={16} />
-              )}
-              <span className="hidden sm:inline">
-                {isImporting ? 'Parsing…' : 'Upload image'}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowImportAnimation(true)}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] sm:px-4"
-              title="Paste pixel-loop/v1 animation JSON"
-            >
-              <Braces size={16} />
-              <span className="hidden lg:inline">Import JSON</span>
-            </button>
-            <button
-              type="button"
-              onClick={requestExport}
-              disabled={isExporting || !hydrated}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#16a34a] px-3.5 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-700/15 transition hover:-translate-y-0.5 hover:bg-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60 sm:px-5"
-            >
-              {isExporting ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
-              <span className="hidden sm:inline">{isExporting ? 'Encoding…' : 'Export GIF'}</span>
-            </button>
+
+            {photoMode ? (
+              <>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  multiple
+                  onChange={handlePhotoInput}
+                  className="sr-only"
+                  aria-label="Choose photos to add as frames"
+                />
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={isImporting || photoFrames.length >= MAX_PHOTO_FRAMES}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50 sm:px-4"
+                  title="Add one or more photos as animation frames"
+                >
+                  {isImporting ? (
+                    <LoaderCircle size={16} className="animate-spin" />
+                  ) : (
+                    <ImagePlus size={16} />
+                  )}
+                  <span className="hidden sm:inline">
+                    {isImporting ? 'Adding…' : 'Upload photos'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={exportPhotos}
+                  disabled={isExporting || !hydrated || photoFrames.length === 0}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#16a34a] px-3.5 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-700/15 transition hover:-translate-y-0.5 hover:bg-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60 sm:px-5"
+                >
+                  {isExporting ? (
+                    <LoaderCircle size={16} className="animate-spin" />
+                  ) : (
+                    <Download size={16} />
+                  )}
+                  <span className="hidden sm:inline">{isExporting ? 'Encoding…' : 'Export GIF'}</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={handleImageImport}
+                  className="sr-only"
+                  aria-label="Choose an image to import"
+                />
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={isImporting}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50 sm:px-4"
+                  title="Supports PNG, JPG, WebP, and the first frame of GIF files"
+                >
+                  {isImporting ? (
+                    <LoaderCircle size={16} className="animate-spin" />
+                  ) : (
+                    <ImagePlus size={16} />
+                  )}
+                  <span className="hidden sm:inline">
+                    {isImporting ? 'Parsing…' : 'Upload image'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowImportAnimation(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-bold text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-[#16a34a]/30 hover:text-[#15803d] sm:px-4"
+                  title="Paste pixel-loop/v1 animation JSON"
+                >
+                  <Braces size={16} />
+                  <span className="hidden lg:inline">Import JSON</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={requestExport}
+                  disabled={isExporting || !hydrated}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#16a34a] px-3.5 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-700/15 transition hover:-translate-y-0.5 hover:bg-[#15803d] disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60 sm:px-5"
+                >
+                  {isExporting ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
+                  <span className="hidden sm:inline">{isExporting ? 'Encoding…' : 'Export GIF'}</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-[1540px] space-y-5 px-4 py-5 sm:px-7 lg:px-10 lg:py-7">
         <div className="grid items-start gap-5 xl:grid-cols-[210px_minmax(520px,1fr)_290px]">
+          {!photoMode && (
           <aside className="order-2 rounded-2xl border border-black/6 bg-white p-4 shadow-[0_12px_40px_rgba(26,26,46,0.04)] xl:order-1">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Tools</h2>
@@ -892,7 +1247,85 @@ export default function App() {
               </button>
             </div>
           </aside>
+          )}
 
+          {photoMode && (
+          <aside className="order-2 rounded-2xl border border-black/6 bg-white p-4 shadow-[0_12px_40px_rgba(26,26,46,0.04)] xl:order-1">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Reposition</h2>
+              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[9px] text-slate-400">
+                01
+              </span>
+            </div>
+            {selectedPhoto ? (
+              <>
+                <div className="mx-auto grid w-max grid-cols-3 gap-1.5">
+                  <span />
+                  <button type="button" onClick={() => nudgePhoto('up')} className="photo-nudge" aria-label="Move up">
+                    <ArrowUp size={16} />
+                  </button>
+                  <span />
+                  <button type="button" onClick={() => nudgePhoto('left')} className="photo-nudge" aria-label="Move left">
+                    <ArrowLeft size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetPhotoPosition(selectedPhoto.id)}
+                    className="photo-nudge"
+                    aria-label="Center photo"
+                    title="Recenter"
+                  >
+                    <Locate size={15} />
+                  </button>
+                  <button type="button" onClick={() => nudgePhoto('right')} className="photo-nudge" aria-label="Move right">
+                    <ArrowRight size={16} />
+                  </button>
+                  <span />
+                  <button type="button" onClick={() => nudgePhoto('down')} className="photo-nudge" aria-label="Move down">
+                    <ArrowDown size={16} />
+                  </button>
+                  <span />
+                </div>
+                <p className="mt-3 text-center text-[10px] leading-4 text-slate-400">
+                  Arrow keys nudge · drag the photo on the canvas to pan
+                </p>
+              </>
+            ) : (
+              <p className="rounded-xl bg-slate-50 p-3 text-[11px] leading-4 text-slate-400">
+                Select a frame, then use the arrows or drag the photo on the canvas to reposition it.
+              </p>
+            )}
+
+            <div className="my-5 h-px bg-slate-100" />
+            <div className="space-y-1.5 rounded-xl bg-slate-50 p-3 text-[11px] text-slate-500">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Canvas</span>
+                <span className="font-mono text-slate-600">
+                  {photoCanvas ? `${photoCanvas.width}×${photoCanvas.height}` : '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Frames</span>
+                <span className="font-mono text-slate-600">
+                  {photoFrames.length} / {MAX_PHOTO_FRAMES}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={clearPhotos}
+              disabled={photoFrames.length === 0}
+              className="tool-utility mt-4 w-full"
+              title="Remove all frames"
+            >
+              <Trash2 size={15} />
+              <span>Clear all frames</span>
+            </button>
+          </aside>
+          )}
+
+          {!photoMode && (
           <section className="order-1 min-w-0 overflow-hidden rounded-[28px] border border-black/6 bg-white shadow-[0_20px_60px_rgba(26,26,46,0.06)] xl:order-2">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -993,6 +1426,51 @@ export default function App() {
               </div>
             </div>
           </section>
+          )}
+
+          {photoMode && (
+          <section className="order-1 min-w-0 overflow-hidden rounded-[28px] border border-black/6 bg-white shadow-[0_20px_60px_rgba(26,26,46,0.06)] xl:order-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="text-sm font-bold">GIF Canvas</h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {selectedPhoto
+                    ? `Editing frame ${photoFrames.findIndex((frame) => frame.id === selectedPhoto.id) + 1} of ${photoFrames.length}`
+                    : 'Upload photos to build your GIF'}
+                </p>
+              </div>
+              {photoCanvas && (
+                <span className="font-mono text-[10px] text-slate-400">
+                  {photoCanvas.width} × {photoCanvas.height}
+                </span>
+              )}
+            </div>
+
+            <div className="canvas-workspace flex min-h-[540px] max-w-full items-center justify-center overflow-auto p-8 sm:p-12">
+              <PhotoCanvas
+                frame={selectedPhoto}
+                canvas={photoCanvas}
+                onMove={(dx, dy) => selectedPhoto && movePhoto(selectedPhoto.id, dx, dy)}
+                onUpload={(files) => void addPhotoFiles(files)}
+                isImporting={isImporting}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4">
+              <p className="text-[11px] text-slate-400">
+                <span className="font-semibold text-slate-500">Tip:</span> Each photo is one frame. Drag to pan, arrow keys nudge, and the timeline sets the order
+              </p>
+              <button
+                type="button"
+                onClick={() => photoInputRef.current?.click()}
+                disabled={isImporting || photoFrames.length >= MAX_PHOTO_FRAMES}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1a1a2e] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#292944] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ImagePlus size={14} /> Add photos
+              </button>
+            </div>
+          </section>
+          )}
 
           <aside className="order-3 space-y-5">
             <section className="overflow-hidden rounded-[24px] bg-[#1a1a2e] p-5 text-white shadow-[0_18px_48px_rgba(26,26,46,0.12)]">
@@ -1002,19 +1480,39 @@ export default function App() {
                   <h2 className="mt-1 text-sm font-bold">Animation</h2>
                 </div>
                 <span className="font-mono text-[10px] text-white/35">
-                  {frames.length > 0 ? `${previewIndex + 1}/${frames.length}` : 'CANVAS'}
+                  {photoMode
+                    ? photoFrames.length > 0
+                      ? `${previewIndex + 1}/${photoFrames.length}`
+                      : 'PHOTO'
+                    : frames.length > 0
+                      ? `${previewIndex + 1}/${frames.length}`
+                      : 'CANVAS'}
                 </span>
               </div>
-              <PixelPreview
-                pixels={previewPixels ?? displayPixels}
-                resolution={resolution}
-                className="mx-auto aspect-square w-full max-w-56 rounded-xl ring-1 ring-white/10"
-              />
+              {photoMode ? (
+                photoCanvas && previewPhoto ? (
+                  <PhotoFramePreview
+                    frame={previewPhoto}
+                    canvas={photoCanvas}
+                    className="mx-auto aspect-square w-full max-w-56 rounded-xl ring-1 ring-white/10"
+                  />
+                ) : (
+                  <div className="canvas-checker mx-auto flex aspect-square w-full max-w-56 items-center justify-center rounded-xl text-[11px] font-semibold text-slate-400 ring-1 ring-white/10">
+                    No frames yet
+                  </div>
+                )
+              ) : (
+                <PixelPreview
+                  pixels={previewPixels ?? displayPixels}
+                  resolution={resolution}
+                  className="mx-auto aspect-square w-full max-w-56 rounded-xl ring-1 ring-white/10"
+                />
+              )}
               <div className="mt-4 flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setIsPlaying((current) => !current)}
-                  disabled={frames.length < 2}
+                  disabled={timelineLength < 2}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#16a34a] text-white transition hover:scale-105 disabled:cursor-not-allowed disabled:opacity-35"
                   aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
                 >
@@ -1023,13 +1521,13 @@ export default function App() {
                 <input
                   type="range"
                   min={0}
-                  max={Math.max(0, frames.length - 1)}
-                  value={Math.min(previewIndex, Math.max(0, frames.length - 1))}
+                  max={Math.max(0, timelineLength - 1)}
+                  value={Math.min(previewIndex, Math.max(0, timelineLength - 1))}
                   onChange={(event) => {
                     setIsPlaying(false)
                     setPreviewIndex(Number(event.target.value))
                   }}
-                  disabled={frames.length === 0}
+                  disabled={timelineLength === 0}
                   className="range-dark min-w-0 flex-1"
                   aria-label="Preview frame"
                 />
@@ -1060,7 +1558,13 @@ export default function App() {
               <label className="setting-row">
                 <span>
                   <strong>Output scale</strong>
-                  <small>{resolution * exportScale} px</small>
+                  <small>
+                    {photoMode
+                      ? photoCanvas
+                        ? `${photoCanvas.width * photoExportScale} × ${photoCanvas.height * photoExportScale} px`
+                        : 'Upload a photo first'
+                      : `${resolution * exportScale} px`}
+                  </small>
                 </span>
                 <select
                   value={exportScale}
@@ -1112,7 +1616,9 @@ export default function App() {
 
               <div className="mt-4 flex items-start gap-2 rounded-xl bg-green-50 p-3 text-[10px] leading-4 text-[#15803d]">
                 <Sparkles size={13} className="mt-0.5 shrink-0" />
-                Integer nearest-neighbor scaling keeps pixel edges crisp. GIFs loop forever.
+                {photoMode
+                  ? 'Photos are quantized to 256 colors per frame and capped for size. GIFs loop forever.'
+                  : 'Integer nearest-neighbor scaling keeps pixel edges crisp. GIFs loop forever.'}
               </div>
 
               <button
@@ -1128,22 +1634,59 @@ export default function App() {
           </aside>
         </div>
 
-        {frames.length >= 80 && (
+        {!photoMode && frames.length >= 80 && (
           <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
             <RotateCcw size={14} /> {frames.length} frames created. You are approaching the 100-frame limit, so preview and export may take longer.
           </div>
         )}
 
-        <Timeline
-          frames={frames}
-          resolution={resolution}
-          editingFrameId={editingFrameId}
-          onSelect={selectFrame}
-          onDelete={deleteFrame}
-          onDuplicate={duplicateFrame}
-          onReorder={reorderFrames}
-          onSnapshot={snapshot}
-        />
+        {photoMode ? (
+          <Timeline
+            frames={photoFrames}
+            editingFrameId={selectedPhotoId}
+            renderPreview={(frame) =>
+              photoCanvas ? (
+                <PhotoFramePreview
+                  frame={frame}
+                  canvas={photoCanvas}
+                  className="aspect-square w-full rounded-lg ring-1 ring-white/10"
+                />
+              ) : null
+            }
+            onSelect={selectPhoto}
+            onDelete={deletePhotoFrame}
+            onDuplicate={duplicatePhotoFrame}
+            onReorder={reorderPhotoFrames}
+            onAdd={() => photoInputRef.current?.click()}
+            addLabel="Upload photos"
+            addDisabled={isImporting || photoFrames.length >= MAX_PHOTO_FRAMES}
+            limit={MAX_PHOTO_FRAMES}
+            emptyTitle="Upload your first photo"
+            emptyHint="Each photo you add becomes a frame in the GIF"
+          />
+        ) : (
+          <Timeline
+            frames={frames}
+            editingFrameId={editingFrameId}
+            renderPreview={(frame, index) => (
+              <PixelPreview
+                pixels={frame.pixels}
+                resolution={resolution}
+                label={`Frame ${index + 1} preview`}
+                className="aspect-square w-full rounded-lg ring-1 ring-white/10"
+              />
+            )}
+            onSelect={selectFrame}
+            onDelete={deleteFrame}
+            onDuplicate={duplicateFrame}
+            onReorder={reorderFrames}
+            onAdd={snapshot}
+            addLabel="Snapshot frame"
+            addDisabled={frames.length >= 100}
+            emptyTitle="Create your first snapshot"
+            emptyHint="The canvas stays in place so you can draw the next frame"
+          />
+        )}
 
         <footer className="flex flex-wrap items-center justify-between gap-3 px-2 pb-3 text-[10px] font-medium uppercase tracking-[0.15em] text-slate-400">
           <span>Local-first · No upload</span>
